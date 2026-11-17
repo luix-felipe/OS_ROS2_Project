@@ -1,0 +1,285 @@
+# AGENTS.md — FleetPOSIX
+
+Este arquivo fornece contexto operacional e arquitetural para agentes de codigo
+que trabalhem neste workspace. Leia-o antes de alterar codigo, executar o
+Turtlesim ou ampliar o escopo.
+
+## Objetivo do projeto
+
+FleetPOSIX e um MVP academico para demonstrar diretamente os conceitos de
+programacao concorrente, sincronizacao e IPC POSIX exigidos na disciplina.
+
+O cenario representa tres AMRs independentes trabalhando em uma fabrica ou
+almoxarifado. Um operador envia missoes online e uma regiao central compartilhada
+precisa ser sincronizada para evitar colisoes.
+
+O ROS 2 e o Turtlesim sao deliberadamente limitados ao plano de simulacao:
+
+- criacao e visualizacao dos tres AMRs;
+- publicacao de pose;
+- recepcao de comandos de velocidade.
+
+O plano de controle deve continuar explicitamente POSIX. Nao substitua as APIs
+avaliadas por abstracoes internas do ROS 2, `std::thread`, `std::mutex` ou apenas
+por um `MultiThreadedExecutor`.
+
+## Ambiente de referencia
+
+- Ubuntu 24.04 em WSL 2;
+- ROS 2 Jazzy;
+- Turtlesim 1.8.x;
+- compilador GCC/G++ 13;
+- C++17;
+- `colcon`, `rosdep` e `ament_uncrustify`;
+- WSLg com `DISPLAY=:0` para a demonstracao visual.
+
+O caminho observado na maquina de origem e:
+
+```text
+/home/lfelipe/fleet_posix_ws
+```
+
+Esse caminho nao e parte do contrato do codigo. Em outra maquina, trate a raiz
+obtida por `pwd` como `WORKSPACE_ROOT` e nao introduza novos caminhos absolutos.
+
+## Estrutura relevante
+
+```text
+fleet_posix_ws/
+├── AGENTS.md
+├── README.md
+├── .gitignore
+└── src/
+    └── fleet_posix/
+        ├── CMakeLists.txt
+        ├── package.xml
+        ├── README.md
+        ├── include/fleet_posix/common.hpp
+        ├── src/supervisor.cpp
+        ├── src/amr_agent.cpp
+        └── scripts/demo.sh
+```
+
+Responsabilidades:
+
+- `supervisor.cpp`: cria e remove IPC, executa `fork`/`exec`, recebe comandos do
+  operador, agrega logs, detecta colisoes, envia shutdown e usa `waitpid`;
+- `amr_agent.cpp`: implementa um processo ROS 2 por AMR e suas threads POSIX de
+  spin, recepcao de comandos e controle;
+- `common.hpp`: contrato binario compartilhado entre processos, constantes da
+  regiao critica, comandos, estados e eventos;
+- `README.md` da raiz: entrada rapida do workspace;
+- `src/fleet_posix/README.md`: documentacao funcional e mapeamento da disciplina.
+
+## Arquitetura atual
+
+O supervisor deve criar todos os processos antes de iniciar a thread de log.
+Isso evita chamar `fork()` depois que ROS 2 ou outras bibliotecas ja tiverem
+criado threads.
+
+```text
+fleet_supervisor
+├── fork + exec: turtlesim_node
+├── fork + exec: amr_agent 1
+├── fork + exec: amr_agent 2
+├── fork + exec: amr_agent 3
+└── pthread: agregador do pipe de logs
+
+amr_agent N
+├── pthread: rclcpp::spin
+├── pthread: mq_receive e producao de comandos
+└── pthread: consumo de comandos e controle do movimento
+```
+
+Cada agente cria sua propria tartaruga (`amr1`, `amr2` ou `amr3`) pelo servico
+`/spawn`. O agente 1 remove a `turtle1` padrao quando possivel.
+
+## Mapeamento obrigatorio das APIs
+
+Preserve o uso explicito destes mecanismos:
+
+| Requisito | Implementacao atual |
+| --- | --- |
+| Processos | `fork`, `execl`, `_exit`, `exit`, `waitpid` |
+| Threads | `pthread_create`, `pthread_join` |
+| Mutexes | estado compartilhado, pose e buffer local |
+| Condicao | `pthread_cond_timedwait` para aguardar pose |
+| Semaforos | buffer produtor-consumidor e corredor compartilhado |
+| Pipe | `LogEvent` dos agentes para o supervisor |
+| Filas POSIX | uma fila de comandos por AMR |
+| Memoria compartilhada | `FleetState` via `shm_open` e `mmap` |
+| Sinais | `SIGINT`/`SIGTERM` e encerramento do Turtlesim |
+
+O semaforo do corredor fica dentro da memoria compartilhada e usa
+`sem_init(..., 1, 1)`, portanto e compartilhado entre processos. Os semaforos
+do buffer de cada agente usam `pshared=0`, pois sincronizam threads locais.
+
+## IPC e ciclo de vida
+
+Os nomes dos objetos POSIX incluem o PID do supervisor:
+
+```text
+/fleet_posix_state_<pid>
+/fleet_posix_cmd_<pid>_1
+/fleet_posix_cmd_<pid>_2
+/fleet_posix_cmd_<pid>_3
+```
+
+Isso permite execucoes independentes e reduz conflitos com recursos antigos.
+Toda saida normal deve:
+
+1. enviar `kShutdown` aos tres agentes;
+2. liberar eventuais esperas no semaforo;
+3. recolher os agentes com `waitpid`;
+4. terminar e recolher o Turtlesim;
+5. fechar e remover filas com `mq_close`/`mq_unlink`;
+6. destruir mutex e semaforo compartilhados;
+7. executar `munmap` e `shm_unlink`.
+
+Nao altere o layout de `Command`, `FleetState` ou `LogEvent` em apenas um dos
+executaveis. Ambos incluem `common.hpp` justamente para manter o contrato
+binario consistente.
+
+`LogEvent` deve permanecer menor que `PIPE_BUF`, para que cada evento escrito
+pelos diferentes agentes continue atomico no pipe compartilhado.
+
+## Geometria e resolucao de colisao
+
+O Turtlesim nao possui obstaculos fisicos. A regiao critica e logica e fica ao
+redor de `(5.5, 5.5)`. Seus raios estao em `common.hpp`.
+
+Rotas automaticas atuais:
+
+- AMR 1: `(2.0, 5.15)` para `(9.0, 5.15)`;
+- AMR 2: `(5.5, 2.0)` para `(5.5, 9.0)`;
+- AMR 3: `(9.0, 5.85)` para `(2.0, 5.85)`.
+
+Historico importante: a primeira versao colocava AMR 1 e AMR 3 na mesma linha,
+trocando exatamente seus pontos inicial e final. Isso produzia uma colisao fora
+da regiao critica mesmo no modo seguro. A solucao foi separar as duas faixas
+horizontais, mantendo as intersecoes apenas dentro da zona protegida.
+
+Nao volte a usar destinos que coincidam com a posicao de espera de outro AMR.
+Se as rotas ou raios forem alterados, valide novamente os dois modos:
+
+- seguro: tres missoes concluidas e zero colisoes;
+- inseguro: tres missoes concluidas e pelo menos uma colisao logica.
+
+## Escopo do MVP
+
+Faz parte do MVP:
+
+- tres AMRs;
+- destinos cartesianos simples;
+- controle proporcional de orientacao e velocidade;
+- uma regiao critica;
+- operacao online no terminal;
+- comparacao segura versus insegura;
+- encerramento e limpeza deterministas.
+
+Nao faz parte do MVP, salvo solicitacao explicita:
+
+- Gazebo, Nav2, SLAM, URDF ou sensores realistas;
+- planejamento de trajetoria ou desvio de obstaculos;
+- comunicacao em rede, banco de dados ou interface grafica propria;
+- integracao com o workspace DGBOT;
+- simulacao de safety industrial.
+
+Turtlesim e uma abstracao visual 2D. Nao descreva o MVP como simulacao fisica
+realista de um AMR.
+
+## Build e verificacoes
+
+Na raiz do workspace:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+rosdep check --from-paths src --ignore-src --rosdistro jazzy
+colcon build --symlink-install --event-handlers console_direct+
+ament_uncrustify src/fleet_posix/src src/fleet_posix/include
+```
+
+O build usa `-Wall -Wextra -Wpedantic -Werror`. Nao remova `-Werror` apenas para
+ocultar um problema; corrija o aviso.
+
+Validacao sem abrir janela:
+
+```bash
+source install/setup.bash
+QT_QPA_PLATFORM=offscreen ros2 run fleet_posix fleet_supervisor --demo
+QT_QPA_PLATFORM=offscreen ros2 run fleet_posix fleet_supervisor --demo --unsafe
+```
+
+Validacao visual no WSLg:
+
+```bash
+source install/setup.bash
+ros2 run fleet_posix fleet_supervisor --demo
+```
+
+Nao use a execucao grafica como teste de sintaxe. Compile primeiro e use o modo
+offscreen para diagnosticos automatizados.
+
+## Operacao online
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 run fleet_posix fleet_supervisor
+```
+
+Comandos:
+
+```text
+enviar <amr> <x> <y>
+pausar <amr>
+retomar <amr>
+status
+sair
+```
+
+As coordenadas aceitas ficam entre `0.5` e `10.5`.
+
+## Resultado de referencia
+
+Validacao realizada em 2026-11-17:
+
+- dependencias do pacote satisfeitas;
+- compilacao concluida sem avisos;
+- `ament_uncrustify` sem divergencias;
+- demonstracao offscreen e visual executadas com sucesso;
+- modo seguro: 3 missoes, 0 colisoes;
+- modo inseguro: 3 missoes, 2 colisoes logicas;
+- agentes finalizados com `pthread_join` e `waitpid`;
+- nenhum objeto `fleet_posix_*` residual em `/dev/shm` ou `/dev/mqueue`.
+
+Ao fazer mudancas funcionais, atualize esta evidencia apenas depois de repetir
+as validacoes relevantes.
+
+## Regras para alteracoes
+
+1. Preserve o `dgbot_ws`; este e um workspace separado.
+2. Prefira caminhos relativos e descoberta via ament a caminhos absolutos.
+3. Crie processos antes de iniciar threads ou inicializar runtimes complexos.
+4. Nao use `sleep` como mecanismo de sincronizacao; sleeps curtos so podem
+   representar tempo de simulacao ou polling com limite.
+5. Proteja toda escrita concorrente em `FleetState` com seu mutex compartilhado.
+6. Nao execute callbacks ROS segurando o mutex compartilhado.
+7. Garanta que qualquer caminho de shutdown libere o corredor se necessario.
+8. Novos IPCs devem ter nome unico e rotina explicita de limpeza.
+9. Mantenha o modo `--demo` deterministico para a apresentacao.
+10. Nao aumente o escopo antes de o MVP continuar reproduzivel.
+
+## Pendencias conhecidas
+
+- escolher a licenca e substituir o `TODO` no `package.xml`;
+- substituir mantenedor e email pelos dados da equipe;
+- inicializar/publicar o repositorio Git, se ainda nao estiver versionado;
+- criar os slides de 4 a 7 paginas;
+- adicionar testes automatizados que nao dependam da interface grafica;
+- melhorar tratamento e limpeza de erros durante inicializacao parcial;
+- considerar mutex compartilhado robusto para recuperacao de processo morto;
+- documentar a divisao de trabalho dos integrantes.
+
+Essas pendencias nao invalidam a demonstracao atual, mas devem ser consideradas
+antes da entrega final.

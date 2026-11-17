@@ -1,0 +1,10 @@
+# Colcon
+build/
+install/
+log/
+
+# Editors and operating systems
+.vscode/
+*.swp
+*~
+.DS_Store
