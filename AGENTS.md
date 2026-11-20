@@ -48,6 +48,8 @@ obtida por `pwd` como `WORKSPACE_ROOT` e nao introduza novos caminhos absolutos.
 fleet_posix_ws/
 ├── AGENTS.md
 ├── README.md
+├── Makefile
+├── scripts/workspace.sh
 ├── .gitignore
 └── src/
     └── fleet_posix/
@@ -209,7 +211,32 @@ realista de um AMR.
 
 ## Build e verificacoes
 
-Na raiz do workspace:
+O `Makefile` da raiz oferece ajuda em portugues com `make help` e consulta o
+andamento documentado no README com `make status`. As tarefas sao implementadas
+em `scripts/workspace.sh`, que descobre a raiz e carrega ROS/overlay conforme
+necessario. Caminhos com espacos devem permanecer protegidos por aspas.
+
+Fluxo automatizado no Ubuntu/WSL:
+
+```bash
+make env
+make verify
+make simulate
+make ipc
+```
+
+`make verify` serializa ambiente, build, estilo e testes, incluindo as duas
+demos offscreen da suite. `make simulate` compara os modos separadamente e
+salva logs em `log/automation/`. `make demo`, `make demo-unsafe`, `make run` e
+`make run-unsafe` sao alvos graficos explicitos e nao entram em `verify`.
+`make deps` executa rosdep separadamente e falha quando a ferramenta/base esta
+ausente. Nao esconda essa pendencia em um resultado positivo de dependencias.
+
+`make clean` remove apenas `build/`, `install/` e `log/` desta raiz, e recusa
+links simbolicos nesses destinos. Nao execute limpeza automaticamente em
+build/test/verify. `make ipc` e somente leitura e pode listar outras execucoes.
+
+Os comandos manuais equivalentes continuam validos. Na raiz do workspace:
 
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -296,6 +323,21 @@ Revalidacao realizada em 2026-11-20, apos as correcoes de ciclo de vida:
 - apresentacao de seis paginas em `docs/FleetPOSIX_apresentacao.pdf`;
 - `rosdep check` nao repetido: `rosdep` nao esta instalado neste ambiente;
   as dependencias CMake foram encontradas durante a compilacao.
+
+Automacoes Make validadas em 2026-11-20:
+
+- ajuda, andamento, diagnostico e leitura de resultados executados no WSL;
+- `make -j4 verify` compilou uma vez e aprovou estilo e os 12 cenarios existentes;
+- `make -j4 simulate ROS_DOMAIN_ID=171`: tres missoes por modo, zero colisoes no
+  seguro e duas no inseguro, com logs separados;
+- `make demo ROS_DOMAIN_ID=171` executado no WSLg: tres missoes e zero colisoes;
+- inspecao apos as simulacoes sem processos ou IPCs residuais;
+- sequencia, interrupcao em falhas de build/estilo/teste/simulacao e recusa de
+  GUI sem display conferidas em uma copia temporaria com ferramentas simuladas;
+- limpeza conferida somente nessa copia temporaria: fontes preservados e
+  destinos simbolicos recusados; os artefatos reais nao foram removidos;
+- `rosdep` e `reportlab` ausentes no Ubuntu: avisos em `make env`;
+  `make deps` e regeneracao de slides continuam dependendo dessas ferramentas.
 
 ## Regras para alteracoes
 

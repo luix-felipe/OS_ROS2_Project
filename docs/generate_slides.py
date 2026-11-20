@@ -152,7 +152,7 @@ lines(435, 89, ['Centro (5.5, 5.5); raios de aquisição 2.35 e núcleo 1.35.',
                 'A pausa mantém a reserva; o shutdown a libera.'], size=12, gap=19, color=MUTED)
 PDF.showPage()
 
-begin(5, 'Resultados e regressões', 'Validação offscreen no WSL: GCC 13, -Werror e ament_uncrustify')
+begin(5, 'Resultados e regressões', 'make verify: build, estilo C++ e testes offscreen no WSL, com GCC 13 e -Werror')
 box(60, 229, 250, 170, 'Modo seguro', ['3 missões concluídas', '0 colisões lógicas', 'Travessias serializadas'])
 box(355, 229, 250, 170, 'Modo inseguro', ['3 missões concluídas', '2 colisões lógicas', 'Sem exclusão do corredor'])
 box(650, 229, 250, 170, 'Modo online', ['Detector ativo sem nova entrada', 'Pausa/retomada com buffer cheio', 'Shutdown cancela missões'])
@@ -162,23 +162,32 @@ text(81, 158, '12 cenários automatizados, organizados em duas entradas CTest', 
 lines(81, 127, ['Sinais, corredor ocupado, falhas parciais de IPC, morte de processo e mutex robusto.',
                 'Cada execução verifica ausência de processos e objetos IPC residuais.'],
       size=14, gap=23, color=WHITE)
-text(60, 55, 'Os testes usam biblioteca padrão Python, C++ e Turtlesim sem interface gráfica.', 13, MUTED)
+text(60, 55, 'MVP e automações validados. Pendências: checagem rosdep, licença e dados da equipe.', 13, MUTED)
 PDF.showPage()
 
-begin(6, 'Roteiro de demonstração', 'Comparar os modos e mostrar os mecanismos de sincronização nos logs')
-rect(60, 230, 840, 172, NAVY)
-lines(80, 369, ['source /opt/ros/jazzy/setup.bash',
-                'source install/setup.bash',
-                'ros2 run fleet_posix fleet_supervisor --demo',
-                'ros2 run fleet_posix fleet_supervisor --demo --unsafe'],
-      size=16, gap=34, color=WHITE, font='Courier')
-box(60, 83, 405, 118, 'Operação online',
-    ['enviar <amr> <x> <y>  |  status', 'pausar <amr>  |  retomar <amr>  |  sair',
+begin(6, 'Automação e demonstração com Make',
+      'No Ubuntu/WSL, cada alvo carrega o ambiente ROS e explica a etapa executada')
+rect(60, 171, 840, 252, NAVY)
+workflow = [
+    ('make help', 'Consultar alvos, opções e sequência sugerida.'),
+    ('make status', 'Ler o andamento, as evidências e as pendências.'),
+    ('make env', 'Conferir ferramentas, pacotes ROS e acesso aos IPCs.'),
+    ('make verify', 'Compilar, conferir estilo e rodar os 12 cenários sem janela.'),
+    ('make simulate', 'Comparar seguro/inseguro offscreen e salvar logs.'),
+    ('make demo', 'Exibir a demonstração segura no WSLg.'),
+    ('make run', 'Enviar missões online e controlar pausa/retomada.'),
+]
+for index, (command, description) in enumerate(workflow):
+    ypos = 395 - index * 31
+    text(80, ypos, command, 16, WHITE, 'Courier')
+    text(320, ypos, description, 14, WHITE)
+box(60, 64, 405, 89, 'Logs e inspeção',
+    ['log/automation/  |  make report  |  make ipc',
+     'Uma falha interrompe a sequência de validação.'])
+box(495, 64, 405, 89, 'Operação online',
+    ['enviar, pausar, retomar, status e sair',
      'Ctrl+C solicita encerramento de toda a frota.'])
-box(495, 83, 405, 118, 'O que o MVP demonstra',
-    ['Exclusão mútua e produtor-consumidor.', 'Criação, comunicação e coleta de processos.',
-     'Turtlesim é uma abstração visual 2D.'])
-text(60, 55, 'Destinos arbitrários não incluem planejamento de rotas nem desvio de obstáculos.', 13, MUTED)
+text(60, 44, 'Controle e IPC permanecem POSIX; Turtlesim é uma abstração visual 2D.', 12, MUTED)
 PDF.showPage()
 
 PDF.save()

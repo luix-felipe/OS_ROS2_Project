@@ -20,6 +20,12 @@ SLAM ou planejamento de trajetoria de um AMR real.
 
 ## Build
 
+Na raiz do workspace, o `Makefile` oferece `make env`, `make build`, `make test`
+e `make verify`. Cada alvo carrega seu ambiente ROS automaticamente. Use
+`make help` para todas as tarefas e `make status` para o andamento documentado
+e os artefatos locais. O guia de automacoes esta no README da raiz. Os comandos
+manuais equivalentes permanecem abaixo.
+
 ```bash
 # Execute na raiz do repositorio, em um terminal Ubuntu/WSL.
 source /opt/ros/jazzy/setup.bash
