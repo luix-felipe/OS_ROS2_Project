@@ -1,6 +1,5 @@
 #include <ament_index_cpp/get_package_prefix.hpp>
 
-#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -10,8 +9,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fcntl.h>
-#include <iostream>
 #include <mqueue.h>
+#include <poll.h>
 #include <pthread.h>
 #include <sstream>
 #include <string>
@@ -30,13 +29,211 @@ using fleet_posix::Command;
 using fleet_posix::CommandType;
 using fleet_posix::FleetState;
 using fleet_posix::LogEvent;
-using fleet_posix::RobotMode;
+using fleet_posix::lock_fleet_state;
 
 volatile sig_atomic_t g_stop_requested = 0;
 
 void signal_handler(int)
 {
   g_stop_requested = 1;
+}
+
+bool check_pthread(int result, const char * operation)
+{
+  if (result == 0) {
+    return true;
+  }
+  errno = result;
+  std::perror(operation);
+  return false;
+}
+
+class IpcResources
+{
+public:
+  IpcResources()
+  : shm_name("/fleet_posix_state_" + std::to_string(getpid()))
+  {
+    for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
+      queue_names[index] =
+        "/fleet_posix_cmd_" + std::to_string(getpid()) + "_" + std::to_string(index + 1);
+      queues[index] = static_cast<mqd_t>(-1);
+    }
+  }
+
+  ~IpcResources()
+  {
+    for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
+      if (queues[index] != static_cast<mqd_t>(-1)) {
+        mq_close(queues[index]);
+        mq_unlink(queue_names[index].c_str());
+      }
+    }
+    for (const int fd : log_pipe) {
+      if (fd >= 0) {
+        close(fd);
+      }
+    }
+    if (state != nullptr) {
+      if (corridor_initialized_) {
+        sem_destroy(&state->corridor);
+      }
+      if (mutex_initialized_) {
+        pthread_mutex_destroy(&state->mutex);
+      }
+      munmap(state, sizeof(FleetState));
+    }
+    if (shm_created_) {
+      shm_unlink(shm_name.c_str());
+    }
+  }
+
+  bool initialize(bool unsafe_mode)
+  {
+    const int shm_fd = shm_open(shm_name.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
+    if (shm_fd == -1) {
+      std::perror("shm_open");
+      return false;
+    }
+    shm_created_ = true;
+    if (ftruncate(shm_fd, sizeof(FleetState)) == -1) {
+      std::perror("ftruncate");
+      close(shm_fd);
+      return false;
+    }
+    void * mapping = mmap(
+      nullptr, sizeof(FleetState), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    close(shm_fd);
+    if (mapping == MAP_FAILED) {
+      std::perror("mmap");
+      return false;
+    }
+    state = static_cast<FleetState *>(mapping);
+    std::memset(state, 0, sizeof(*state));
+
+    pthread_mutexattr_t attributes;
+    if (!check_pthread(pthread_mutexattr_init(&attributes), "pthread_mutexattr_init")) {
+      return false;
+    }
+    const bool attributes_ok =
+      check_pthread(
+      pthread_mutexattr_setpshared(&attributes, PTHREAD_PROCESS_SHARED),
+      "pthread_mutexattr_setpshared") &&
+      check_pthread(
+      pthread_mutexattr_setrobust(&attributes, PTHREAD_MUTEX_ROBUST),
+      "pthread_mutexattr_setrobust");
+    if (attributes_ok) {
+      mutex_initialized_ = check_pthread(
+        pthread_mutex_init(&state->mutex, &attributes), "pthread_mutex_init");
+    }
+    pthread_mutexattr_destroy(&attributes);
+    if (!mutex_initialized_) {
+      return false;
+    }
+    if (sem_init(&state->corridor, 1, 1) == -1) {
+      std::perror("sem_init corredor");
+      return false;
+    }
+    corridor_initialized_ = true;
+    state->safe_mode = unsafe_mode ? 0 : 1;
+
+    mq_attr queue_attributes{};
+    queue_attributes.mq_maxmsg = 10;
+    queue_attributes.mq_msgsize = sizeof(Command);
+    for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
+      queues[index] = mq_open(
+        queue_names[index].c_str(), O_CREAT | O_EXCL | O_WRONLY | O_NONBLOCK,
+        0600, &queue_attributes);
+      if (queues[index] == static_cast<mqd_t>(-1)) {
+        std::perror("mq_open");
+        return false;
+      }
+    }
+    if (pipe(log_pipe) == -1) {
+      std::perror("pipe");
+      return false;
+    }
+    return true;
+  }
+
+  IpcResources(const IpcResources &) = delete;
+  IpcResources & operator=(const IpcResources &) = delete;
+
+  std::string shm_name;
+  std::string queue_names[fleet_posix::kRobotCount];
+  mqd_t queues[fleet_posix::kRobotCount];
+  FleetState * state{nullptr};
+  int log_pipe[2]{-1, -1};
+
+private:
+  bool shm_created_{false};
+  bool mutex_initialized_{false};
+  bool corridor_initialized_{false};
+};
+
+struct ChildProcess
+{
+  pid_t pid{-1};
+  int status{0};
+  bool reaped{false};
+};
+
+bool reap_if_finished(ChildProcess & child)
+{
+  if (child.pid <= 0 || child.reaped) {
+    return child.reaped;
+  }
+  const pid_t result = waitpid(child.pid, &child.status, WNOHANG);
+  if (result == child.pid || (result == -1 && errno == ECHILD)) {
+    child.reaped = true;
+  }
+  return child.reaped;
+}
+
+bool children_running(ChildProcess & turtlesim, ChildProcess agents[3])
+{
+  bool running = !reap_if_finished(turtlesim);
+  for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
+    running = !reap_if_finished(agents[index]) && running;
+  }
+  if (!running) {
+    std::fprintf(stderr, "Um processo filho terminou antes do encerramento da frota.\n");
+  }
+  return running;
+}
+
+bool wait_for_child(ChildProcess & child, std::chrono::milliseconds timeout)
+{
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (!reap_if_finished(child) && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  return reap_if_finished(child);
+}
+
+bool finish_child(ChildProcess & child, bool terminate)
+{
+  if (child.pid <= 0) {
+    return false;
+  }
+  if (terminate && !reap_if_finished(child)) {
+    kill(child.pid, SIGTERM);
+  }
+  if (!wait_for_child(child, std::chrono::seconds(3))) {
+    std::fprintf(stderr, "Filho pid=%d excedeu prazo de shutdown; enviando SIGTERM.\n", child.pid);
+    kill(child.pid, SIGTERM);
+    if (!wait_for_child(child, std::chrono::seconds(2))) {
+      std::fprintf(stderr, "Filho pid=%d nao respondeu; enviando SIGKILL.\n", child.pid);
+      kill(child.pid, SIGKILL);
+      pid_t result;
+      do {
+        result = waitpid(child.pid, &child.status, 0);
+      } while (result == -1 && errno == EINTR);
+      child.reaped = result == child.pid;
+      return false;
+    }
+  }
+  return child.reaped && WIFEXITED(child.status) && WEXITSTATUS(child.status) == 0;
 }
 
 bool read_exact(int fd, void * destination, std::size_t size)
@@ -65,17 +262,25 @@ void * logger_thread(void * argument)
   const int fd = *static_cast<int *>(argument);
   LogEvent event{};
   while (read_exact(fd, &event, sizeof(event))) {
-    std::printf("[AMR %d | pid=%d] %s\n", event.robot_id, event.pid, event.text);
+    std::printf("[AMR %d | pid=%d] %.*s\n", event.robot_id, event.pid,
+      static_cast<int>(sizeof(event.text)), event.text);
   }
   return nullptr;
 }
 
 bool send_command(mqd_t queue, const Command & command)
 {
-  if (mq_send(
-      queue, reinterpret_cast<const char *>(&command), sizeof(command), 0) == -1)
-  {
-    std::perror("mq_send");
+  const unsigned int priority = command.type == CommandType::kMission ? 0U : 1U;
+  int result;
+  do {
+    result = mq_send(queue, reinterpret_cast<const char *>(&command), sizeof(command), priority);
+  } while (result == -1 && errno == EINTR && !g_stop_requested);
+  if (result == -1) {
+    if (errno == EAGAIN) {
+      std::fprintf(stderr, "Fila POSIX cheia: comando para AMR %u recusado.\n", command.robot_id);
+    } else {
+      std::perror("mq_send");
+    }
     return false;
   }
   return true;
@@ -83,7 +288,7 @@ bool send_command(mqd_t queue, const Command & command)
 
 void print_status(FleetState * state)
 {
-  pthread_mutex_lock(&state->mutex);
+  lock_fleet_state(state);
   std::printf("\n%-5s %-8s %-8s %-22s %-8s %-9s\n",
     "AMR", "X", "Y", "ESTADO", "MISSAO", "CONCLUIDAS");
   for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
@@ -102,16 +307,12 @@ void print_status(FleetState * state)
 
 void detect_collisions(FleetState * state, bool active_pairs[3][3])
 {
-  pthread_mutex_lock(&state->mutex);
+  lock_fleet_state(state);
   for (int first = 0; first < fleet_posix::kRobotCount; ++first) {
     for (int second = first + 1; second < fleet_posix::kRobotCount; ++second) {
       const auto & a = state->robots[first];
       const auto & b = state->robots[second];
-      if (!a.online || !b.online) {
-        continue;
-      }
-      const double distance = std::hypot(a.x - b.x, a.y - b.y);
-      const bool colliding = distance < 0.55;
+      const bool colliding = a.online && b.online && std::hypot(a.x - b.x, a.y - b.y) < 0.55;
       if (colliding && !active_pairs[first][second]) {
         ++state->collision_count;
         std::printf(
@@ -127,7 +328,7 @@ void detect_collisions(FleetState * state, bool active_pairs[3][3])
 bool all_robots_online(FleetState * state)
 {
   bool result = true;
-  pthread_mutex_lock(&state->mutex);
+  lock_fleet_state(state);
   for (const auto & robot : state->robots) {
     result = result && robot.online;
   }
@@ -138,7 +339,7 @@ bool all_robots_online(FleetState * state)
 bool all_missions_complete(FleetState * state)
 {
   bool result = true;
-  pthread_mutex_lock(&state->mutex);
+  lock_fleet_state(state);
   for (const auto & robot : state->robots) {
     result = result && robot.completed_missions > 0;
   }
@@ -146,93 +347,266 @@ bool all_missions_complete(FleetState * state)
   return result;
 }
 
-void run_demo(mqd_t queues[3], FleetState * state)
+bool run_demo(IpcResources & ipc, ChildProcess & turtlesim, ChildProcess agents[3])
 {
   std::printf("Aguardando os tres agentes criarem suas tartarugas...\n");
-  for (int attempt = 0; attempt < 100 && !all_robots_online(state); ++attempt) {
+  for (int attempt = 0; attempt < 100 && !all_robots_online(ipc.state); ++attempt) {
+    if (g_stop_requested || !children_running(turtlesim, agents)) {
+      return false;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
-
-  if (!all_robots_online(state)) {
+  if (!all_robots_online(ipc.state)) {
     std::fprintf(stderr, "Nem todos os AMRs ficaram online; encerrando demonstracao.\n");
-    g_stop_requested = 1;
-    return;
+    return false;
   }
 
   const float targets[3][2] = {{9.0F, 5.15F}, {5.5F, 9.0F}, {2.0F, 5.85F}};
-  for (int index = 0; index < 3; ++index) {
+  for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
     Command command{};
     command.type = CommandType::kMission;
     command.robot_id = static_cast<std::uint32_t>(index + 1);
     command.target_x = targets[index][0];
     command.target_y = targets[index][1];
     command.mission_id = static_cast<std::uint32_t>(index + 1);
-    send_command(queues[index], command);
+    if (!send_command(ipc.queues[index], command)) {
+      return false;
+    }
   }
 
   std::printf("Tres missoes simultaneas enviadas pelas filas POSIX.\n");
   bool collision_pairs[3][3]{};
   for (int tick = 0; tick < 240 && !g_stop_requested; ++tick) {
-    detect_collisions(state, collision_pairs);
-    if (tick % 25 == 0) {
-      print_status(state);
+    if (!children_running(turtlesim, agents)) {
+      return false;
     }
-    if (tick > 20 && all_missions_complete(state)) {
-      break;
+    detect_collisions(ipc.state, collision_pairs);
+    if (tick % 25 == 0) {
+      print_status(ipc.state);
+    }
+    if (all_missions_complete(ipc.state)) {
+      lock_fleet_state(ipc.state);
+      const bool expected_collisions = ipc.state->safe_mode ?
+        ipc.state->collision_count == 0 : ipc.state->collision_count > 0;
+      pthread_mutex_unlock(&ipc.state->mutex);
+      print_status(ipc.state);
+      if (!expected_collisions) {
+        std::fprintf(stderr, "Demonstracao apresentou contagem de colisoes inesperada.\n");
+      }
+      return expected_collisions;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
-  print_status(state);
+  std::fprintf(stderr, "Demonstracao interrompida ou prazo das missoes excedido.\n");
+  print_status(ipc.state);
+  return false;
 }
 
-void run_console(mqd_t queues[3], FleetState * state)
+bool handle_console_line(
+  const std::string & line, IpcResources & ipc, std::uint32_t & next_mission)
+{
+  std::istringstream input(line);
+  std::string action;
+  input >> action;
+  if (action.empty()) {
+    return true;
+  }
+  if (action == "status") {
+    print_status(ipc.state);
+    return true;
+  }
+  if (action == "sair") {
+    return false;
+  }
+
+  int robot = 0;
+  if (!(input >> robot) || robot < 1 || robot > fleet_posix::kRobotCount) {
+    std::printf("AMR deve estar entre 1 e 3.\n");
+    return true;
+  }
+  Command command{};
+  command.robot_id = static_cast<std::uint32_t>(robot);
+  if (action == "enviar") {
+    input >> command.target_x >> command.target_y;
+    if (!input || !std::isfinite(command.target_x) || !std::isfinite(command.target_y) ||
+      command.target_x < 0.5F || command.target_x > 10.5F ||
+      command.target_y < 0.5F || command.target_y > 10.5F)
+    {
+      std::printf("Destino invalido. Use coordenadas entre 0.5 e 10.5.\n");
+      return true;
+    }
+    command.type = CommandType::kMission;
+    command.mission_id = next_mission++;
+  } else if (action == "pausar") {
+    command.type = CommandType::kPause;
+  } else if (action == "retomar") {
+    command.type = CommandType::kResume;
+  } else {
+    std::printf("Comando desconhecido.\n");
+    return true;
+  }
+  send_command(ipc.queues[robot - 1], command);
+  return true;
+}
+
+bool run_console(IpcResources & ipc, ChildProcess & turtlesim, ChildProcess agents[3])
 {
   std::printf(
     "Comandos: enviar <amr> <x> <y> | pausar <amr> | retomar <amr> | "
     "status | sair\n");
+  std::printf("fleet> ");
+  std::fflush(stdout);
   std::uint32_t next_mission = 1;
-  std::string line;
-  while (!g_stop_requested && std::printf("fleet> ") && std::getline(std::cin, line)) {
-    std::istringstream input(line);
-    std::string action;
-    input >> action;
-    if (action == "status") {
-      print_status(state);
+  std::string pending;
+  bool collision_pairs[3][3]{};
+  while (!g_stop_requested) {
+    if (!children_running(turtlesim, agents)) {
+      return false;
+    }
+    detect_collisions(ipc.state, collision_pairs);
+    pollfd console{STDIN_FILENO, POLLIN, 0};
+    const int ready = poll(&console, 1, 50);
+    if (ready == -1 && errno == EINTR) {
       continue;
     }
-    if (action == "sair") {
+    if (ready == -1 || (console.revents & (POLLERR | POLLNVAL))) {
+      std::fprintf(stderr, "Erro ao aguardar entrada do operador.\n");
+      return false;
+    }
+    if (ready == 0) {
+      continue;
+    }
+    char buffer[512];
+    const ssize_t received = read(STDIN_FILENO, buffer, sizeof(buffer));
+    if (received == -1 && errno == EINTR) {
+      continue;
+    }
+    if (received < 0) {
+      std::perror("read stdin");
+      return false;
+    }
+    if (received == 0) {
+      if (!pending.empty()) {
+        handle_console_line(pending, ipc, next_mission);
+      }
+      return true;
+    }
+    pending.append(buffer, static_cast<std::size_t>(received));
+    std::size_t newline;
+    while ((newline = pending.find('\n')) != std::string::npos) {
+      const std::string line = pending.substr(0, newline);
+      pending.erase(0, newline + 1);
+      if (!handle_console_line(line, ipc, next_mission)) {
+        return true;
+      }
+      std::printf("fleet> ");
+      std::fflush(stdout);
+    }
+    if (pending.size() > 4096) {
+      std::fprintf(stderr, "Linha de comando muito longa; entrada descartada.\n");
+      pending.clear();
+    }
+  }
+  return true;
+}
+
+int run_supervisor(bool demo_mode, bool unsafe_mode)
+{
+  // Descoberta potencialmente falha precede a criacao de IPC e filhos.
+  const std::filesystem::path executable_dir =
+    std::filesystem::canonical("/proc/self/exe").parent_path();
+  const std::string agent_executable = (executable_dir / "amr_agent").string();
+  const std::string turtlesim_executable =
+    ament_index_cpp::get_package_prefix("turtlesim") + "/lib/turtlesim/turtlesim_node";
+  IpcResources ipc;
+  if (!ipc.initialize(unsafe_mode)) {
+    return EXIT_FAILURE;
+  }
+  std::string agent_ids[fleet_posix::kRobotCount];
+  for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
+    agent_ids[index] = std::to_string(index + 1);
+  }
+  const std::string log_fd = std::to_string(ipc.log_pipe[1]);
+
+  std::printf("FleetPOSIX supervisor pid=%d | modo=%s\n",
+    getpid(), unsafe_mode ? "INSEGURO" : "SEGURO");
+  ChildProcess turtlesim;
+  ChildProcess agents[fleet_posix::kRobotCount];
+  turtlesim.pid = fork();
+  if (turtlesim.pid == 0) {
+    close(ipc.log_pipe[0]);
+    close(ipc.log_pipe[1]);
+    execl(turtlesim_executable.c_str(), turtlesim_executable.c_str(), nullptr);
+    std::perror("exec turtlesim_node");
+    _exit(127);
+  }
+  if (turtlesim.pid < 0) {
+    std::perror("fork turtlesim");
+    return EXIT_FAILURE;
+  }
+
+  bool startup_ok = true;
+  for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
+    agents[index].pid = fork();
+    if (agents[index].pid == 0) {
+      close(ipc.log_pipe[0]);
+      execl(
+        agent_executable.c_str(), agent_executable.c_str(), "--id", agent_ids[index].c_str(),
+        "--shm", ipc.shm_name.c_str(), "--queue", ipc.queue_names[index].c_str(),
+        "--log-fd", log_fd.c_str(), nullptr);
+      std::perror("exec amr_agent");
+      _exit(127);
+    }
+    if (agents[index].pid < 0) {
+      std::perror("fork amr_agent");
+      startup_ok = false;
       break;
     }
-
-    int robot = 0;
-    input >> robot;
-    if (robot < 1 || robot > 3) {
-      std::printf("AMR deve estar entre 1 e 3.\n");
-      continue;
-    }
-
-    Command command{};
-    command.robot_id = static_cast<std::uint32_t>(robot);
-    if (action == "enviar") {
-      input >> command.target_x >> command.target_y;
-      if (!input || command.target_x < 0.5F || command.target_x > 10.5F ||
-        command.target_y < 0.5F || command.target_y > 10.5F)
-      {
-        std::printf("Destino invalido. Use coordenadas entre 0.5 e 10.5.\n");
-        continue;
-      }
-      command.type = CommandType::kMission;
-      command.mission_id = next_mission++;
-    } else if (action == "pausar") {
-      command.type = CommandType::kPause;
-    } else if (action == "retomar") {
-      command.type = CommandType::kResume;
-    } else {
-      std::printf("Comando desconhecido.\n");
-      continue;
-    }
-    send_command(queues[robot - 1], command);
   }
+  close(ipc.log_pipe[1]);
+  ipc.log_pipe[1] = -1;
+  pthread_t logger{};
+  const bool logger_started = check_pthread(
+    pthread_create(&logger, nullptr, logger_thread, &ipc.log_pipe[0]), "pthread_create logger");
+  bool run_ok = false;
+  try {
+    if (startup_ok && logger_started) {
+      run_ok = demo_mode ? run_demo(ipc, turtlesim, agents) : run_console(ipc, turtlesim, agents);
+    }
+  } catch (const std::exception & error) {
+    std::fprintf(stderr, "Falha durante operacao: %s\n", error.what());
+  }
+
+  lock_fleet_state(ipc.state);
+  ipc.state->shutdown_requested = 1;
+  pthread_mutex_unlock(&ipc.state->mutex);
+  for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
+    if (agents[index].pid > 0 && !agents[index].reaped) {
+      Command shutdown{};
+      shutdown.type = CommandType::kShutdown;
+      shutdown.robot_id = static_cast<std::uint32_t>(index + 1);
+      send_command(ipc.queues[index], shutdown);
+    }
+    sem_post(&ipc.state->corridor);
+  }
+
+  bool agents_ok = true;
+  for (auto & agent : agents) {
+    agents_ok = finish_child(agent, false) && agents_ok;
+  }
+  finish_child(turtlesim, true);
+  if (logger_started) {
+    pthread_join(logger, nullptr);
+  }
+  // O leitor so e fechado depois de todos os escritores e da thread de log.
+  close(ipc.log_pipe[0]);
+  ipc.log_pipe[0] = -1;
+  lock_fleet_state(ipc.state);
+  ipc.state->corridor_owner = 0;
+  pthread_mutex_unlock(&ipc.state->mutex);
+  std::printf("Supervisor recolheu todos os processos com waitpid().\n");
+  print_status(ipc.state);
+  return run_ok && agents_ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 }  // namespace
@@ -240,157 +614,32 @@ void run_console(mqd_t queues[3], FleetState * state)
 int main(int argc, char * argv[])
 {
   std::setvbuf(stdout, nullptr, _IOLBF, 0);
-  const bool demo_mode = argc > 1 && std::strcmp(argv[1], "--demo") == 0;
-  const bool unsafe_mode =
-    (argc > 1 && std::strcmp(argv[1], "--unsafe") == 0) ||
-    (argc > 2 && std::strcmp(argv[2], "--unsafe") == 0);
-
-  std::signal(SIGINT, signal_handler);
-  std::signal(SIGTERM, signal_handler);
-
-  const pid_t supervisor_pid = getpid();
-  const std::string shm_name = "/fleet_posix_state_" + std::to_string(supervisor_pid);
-  std::string queue_names[3];
-  for (int index = 0; index < 3; ++index) {
-    queue_names[index] =
-      "/fleet_posix_cmd_" + std::to_string(supervisor_pid) + "_" + std::to_string(index + 1);
-  }
-
-  const int shm_fd = shm_open(shm_name.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
-  if (shm_fd == -1 || ftruncate(shm_fd, sizeof(FleetState)) == -1) {
-    std::perror("shm_open/ftruncate");
-    return EXIT_FAILURE;
-  }
-  auto * state = static_cast<FleetState *>(mmap(
-      nullptr, sizeof(FleetState), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0));
-  close(shm_fd);
-  if (state == MAP_FAILED) {
-    std::perror("mmap");
-    shm_unlink(shm_name.c_str());
-    return EXIT_FAILURE;
-  }
-  std::memset(state, 0, sizeof(*state));
-
-  pthread_mutexattr_t mutex_attributes;
-  pthread_mutexattr_init(&mutex_attributes);
-  pthread_mutexattr_setpshared(&mutex_attributes, PTHREAD_PROCESS_SHARED);
-  pthread_mutex_init(&state->mutex, &mutex_attributes);
-  pthread_mutexattr_destroy(&mutex_attributes);
-  sem_init(&state->corridor, 1, 1);
-  state->safe_mode = unsafe_mode ? 0 : 1;
-
-  mq_attr queue_attributes{};
-  queue_attributes.mq_maxmsg = 10;
-  queue_attributes.mq_msgsize = sizeof(Command);
-  mqd_t queues[3];
-  for (int index = 0; index < 3; ++index) {
-    queues[index] = mq_open(
-      queue_names[index].c_str(), O_CREAT | O_EXCL | O_RDWR, 0600, &queue_attributes);
-    if (queues[index] == static_cast<mqd_t>(-1)) {
-      std::perror("mq_open");
+  bool demo_mode = false;
+  bool unsafe_mode = false;
+  for (int index = 1; index < argc; ++index) {
+    if (std::strcmp(argv[index], "--demo") == 0) {
+      demo_mode = true;
+    } else if (std::strcmp(argv[index], "--unsafe") == 0) {
+      unsafe_mode = true;
+    } else if (std::strcmp(argv[index], "--help") == 0) {
+      std::printf("Uso: fleet_supervisor [--demo] [--unsafe]\n");
+      return EXIT_SUCCESS;
+    } else {
+      std::fprintf(stderr, "Opcao desconhecida: %s\n", argv[index]);
       return EXIT_FAILURE;
     }
   }
+  struct sigaction action{};
+  action.sa_handler = signal_handler;
+  sigemptyset(&action.sa_mask);
+  sigaction(SIGINT, &action, nullptr);
+  sigaction(SIGTERM, &action, nullptr);
 
-  int log_pipe[2];
-  if (pipe(log_pipe) == -1) {
-    std::perror("pipe");
-    return EXIT_FAILURE;
+  int result = EXIT_FAILURE;
+  try {
+    result = run_supervisor(demo_mode, unsafe_mode);
+  } catch (const std::exception & error) {
+    std::fprintf(stderr, "Falha ao iniciar supervisor: %s\n", error.what());
   }
-
-  const std::filesystem::path executable_dir =
-    std::filesystem::canonical("/proc/self/exe").parent_path();
-  const std::string agent_executable = (executable_dir / "amr_agent").string();
-  const std::string turtlesim_executable =
-    ament_index_cpp::get_package_prefix("turtlesim") + "/lib/turtlesim/turtlesim_node";
-
-  std::printf(
-    "FleetPOSIX supervisor pid=%d | modo=%s\n",
-    supervisor_pid, state->safe_mode ? "SEGURO" : "INSEGURO");
-
-  const pid_t turtlesim_pid = fork();
-  if (turtlesim_pid == 0) {
-    close(log_pipe[0]);
-    close(log_pipe[1]);
-    execl(turtlesim_executable.c_str(), turtlesim_executable.c_str(), nullptr);
-    std::perror("exec turtlesim_node");
-    _exit(127);
-  }
-  if (turtlesim_pid < 0) {
-    std::perror("fork turtlesim");
-    return EXIT_FAILURE;
-  }
-
-  pid_t agent_pids[3]{};
-  for (int index = 0; index < 3; ++index) {
-    agent_pids[index] = fork();
-    if (agent_pids[index] == 0) {
-      close(log_pipe[0]);
-      const std::string id = std::to_string(index + 1);
-      const std::string log_fd = std::to_string(log_pipe[1]);
-      execl(
-        agent_executable.c_str(), agent_executable.c_str(), "--id", id.c_str(),
-        "--shm", shm_name.c_str(), "--queue", queue_names[index].c_str(),
-        "--log-fd", log_fd.c_str(), nullptr);
-      std::perror("exec amr_agent");
-      _exit(127);
-    }
-    if (agent_pids[index] < 0) {
-      std::perror("fork amr_agent");
-      g_stop_requested = 1;
-      break;
-    }
-  }
-
-  close(log_pipe[1]);
-  pthread_t logger{};
-  pthread_create(&logger, nullptr, logger_thread, &log_pipe[0]);
-
-  if (demo_mode) {
-    run_demo(queues, state);
-  } else {
-    run_console(queues, state);
-  }
-
-  pthread_mutex_lock(&state->mutex);
-  state->shutdown_requested = 1;
-  pthread_mutex_unlock(&state->mutex);
-  for (int index = 0; index < 3; ++index) {
-    Command shutdown{};
-    shutdown.type = CommandType::kShutdown;
-    shutdown.robot_id = static_cast<std::uint32_t>(index + 1);
-    send_command(queues[index], shutdown);
-    sem_post(&state->corridor);
-  }
-
-  bool agents_ok = true;
-  for (const pid_t pid : agent_pids) {
-    if (pid <= 0) {
-      agents_ok = false;
-      continue;
-    }
-    int status = 0;
-    if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-      agents_ok = false;
-    }
-  }
-
-  kill(turtlesim_pid, SIGTERM);
-  waitpid(turtlesim_pid, nullptr, 0);
-  close(log_pipe[0]);
-  pthread_join(logger, nullptr);
-
-  std::printf("Supervisor recolheu todos os processos com waitpid().\n");
-  print_status(state);
-
-  for (int index = 0; index < 3; ++index) {
-    mq_close(queues[index]);
-    mq_unlink(queue_names[index].c_str());
-  }
-  sem_destroy(&state->corridor);
-  pthread_mutex_destroy(&state->mutex);
-  munmap(state, sizeof(FleetState));
-  shm_unlink(shm_name.c_str());
-
-  std::exit(agents_ok ? EXIT_SUCCESS : EXIT_FAILURE);
+  std::exit(result);
 }

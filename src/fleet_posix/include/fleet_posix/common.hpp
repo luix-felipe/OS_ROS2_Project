@@ -1,7 +1,11 @@
 #ifndef FLEET_POSIX__COMMON_HPP_
 #define FLEET_POSIX__COMMON_HPP_
 
+#include <cerrno>
+#include <climits>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <pthread.h>
 #include <semaphore.h>
 #include <sys/types.h>
@@ -73,6 +77,22 @@ struct LogEvent
   int robot_id;
   char text[192];
 };
+
+static_assert(sizeof(LogEvent) < PIPE_BUF, "LogEvent deve caber em uma escrita atomica no pipe");
+
+inline void lock_fleet_state(FleetState * state)
+{
+  int result = pthread_mutex_lock(&state->mutex);
+  if (result == EOWNERDEAD) {
+    // O supervisor encerra a frota se um filho morrer; permite concluir a limpeza.
+    result = pthread_mutex_consistent(&state->mutex);
+  }
+  if (result != 0) {
+    errno = result;
+    std::perror("pthread_mutex_lock compartilhado");
+    std::abort();
+  }
+}
 
 inline const char * mode_name(RobotMode mode)
 {

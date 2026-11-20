@@ -9,17 +9,19 @@
 #include <cerrno>
 #include <chrono>
 #include <cmath>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <mqueue.h>
+#include <poll.h>
 #include <pthread.h>
 #include <semaphore.h>
 #include <string>
+#include <stdexcept>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <thread>
 #include <unistd.h>
 
 #include "fleet_posix/common.hpp"
@@ -28,6 +30,25 @@ using namespace std::chrono_literals;
 
 namespace
 {
+
+volatile sig_atomic_t g_stop_requested = 0;
+
+void signal_handler(int)
+{
+  g_stop_requested = 1;
+}
+
+timespec deadline_after(long nanoseconds)
+{
+  timespec deadline{};
+  clock_gettime(CLOCK_REALTIME, &deadline);
+  deadline.tv_nsec += nanoseconds;
+  if (deadline.tv_nsec >= 1000000000) {
+    ++deadline.tv_sec;
+    deadline.tv_nsec -= 1000000000;
+  }
+  return deadline;
+}
 
 double normalize_angle(double angle)
 {
@@ -49,11 +70,13 @@ public:
     id_(id), fleet_(fleet), command_queue_(command_queue), log_fd_(log_fd),
     turtle_name_("amr" + std::to_string(id))
   {
-    pthread_mutex_init(&pose_mutex_, nullptr);
-    pthread_cond_init(&pose_changed_, nullptr);
-    pthread_mutex_init(&command_buffer_.mutex, nullptr);
-    sem_init(&command_buffer_.free_slots, 0, fleet_posix::kCommandQueueCapacity);
-    sem_init(&command_buffer_.used_slots, 0, 0);
+    if (sem_init(&command_buffer_.free_slots, 0, fleet_posix::kCommandQueueCapacity) == -1) {
+      throw std::runtime_error("sem_init free_slots");
+    }
+    if (sem_init(&command_buffer_.used_slots, 0, 0) == -1) {
+      sem_destroy(&command_buffer_.free_slots);
+      throw std::runtime_error("sem_init used_slots");
+    }
 
     velocity_publisher_ = create_publisher<geometry_msgs::msg::Twist>(
       "/" + turtle_name_ + "/cmd_vel", 10);
@@ -71,18 +94,23 @@ public:
     pthread_mutex_destroy(&command_buffer_.mutex);
     pthread_cond_destroy(&pose_changed_);
     pthread_mutex_destroy(&pose_mutex_);
+    pthread_mutex_destroy(&motion_mutex_);
   }
 
   bool spawn_turtle()
   {
-    while (rclcpp::ok() && !spawn_client_->wait_for_service(500ms)) {
-      log("aguardando servico /spawn do Turtlesim");
+    const auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (!shutdown_requested() && !spawn_client_->wait_for_service(100ms)) {
+      if (std::chrono::steady_clock::now() >= deadline) {
+        log("prazo excedido ao aguardar servico /spawn");
+        return false;
+      }
     }
-    if (!rclcpp::ok()) {
+    if (shutdown_requested()) {
       return false;
     }
 
-    if (id_ == 1 && kill_client_->wait_for_service(2s)) {
+    if (id_ == 1 && kill_client_->wait_for_service(100ms)) {
       auto kill_request = std::make_shared<turtlesim::srv::Kill::Request>();
       kill_request->name = "turtle1";
       const auto future = kill_client_->async_send_request(kill_request);
@@ -106,7 +134,10 @@ public:
       return false;
     }
 
-    pthread_mutex_lock(&fleet_->mutex);
+    if (shutdown_requested()) {
+      return false;
+    }
+    fleet_posix::lock_fleet_state(fleet_);
     auto & robot = fleet_->robots[id_ - 1];
     robot.pid = getpid();
     robot.online = 1;
@@ -121,22 +152,40 @@ public:
 
   int run()
   {
-    pthread_t ros_thread{};
-    pthread_t command_thread{};
-    pthread_t control_thread{};
-    pthread_create(&ros_thread, nullptr, ros_thread_entry, this);
-    pthread_create(&command_thread, nullptr, command_thread_entry, this);
-    pthread_create(&control_thread, nullptr, control_thread_entry, this);
-
-    pthread_join(command_thread, nullptr);
-    pthread_join(control_thread, nullptr);
-    rclcpp::shutdown();
-    pthread_join(ros_thread, nullptr);
-
+    pthread_t threads[3]{};
+    void * (*entries[3])(void *) = {
+      ros_thread_entry, command_thread_entry, control_thread_entry};
+    int started = 0;
+    for (; started < 3; ++started) {
+      const int result = pthread_create(&threads[started], nullptr, entries[started], this);
+      if (result != 0) {
+        errno = result;
+        std::perror("pthread_create agente");
+        failed_.store(true);
+        request_stop();
+        break;
+      }
+    }
+    if (started >= 2) {
+      pthread_join(threads[1], nullptr);
+    }
+    request_stop();
+    if (started >= 3) {
+      pthread_join(threads[2], nullptr);
+    }
     publish_stop();
-    set_mode(fleet_posix::RobotMode::kStopped);
+    fleet_posix::lock_fleet_state(fleet_);
+    auto & robot = fleet_->robots[id_ - 1];
+    robot.online = 0;
+    robot.current_mission = 0;
+    robot.mode = fleet_posix::RobotMode::kStopped;
+    pthread_mutex_unlock(&fleet_->mutex);
+    rclcpp::shutdown();
+    if (started >= 1) {
+      pthread_join(threads[0], nullptr);
+    }
     log("threads finalizadas com pthread_join");
-    return EXIT_SUCCESS;
+    return failed_.load() ? EXIT_FAILURE : EXIT_SUCCESS;
   }
 
 private:
@@ -156,13 +205,19 @@ private:
     std::size_t tail{0};
     sem_t free_slots;
     sem_t used_slots;
-    pthread_mutex_t mutex;
+    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
   };
 
   static void * ros_thread_entry(void * argument)
   {
     auto * self = static_cast<AmrAgent *>(argument);
-    rclcpp::spin(self->shared_from_this());
+    try {
+      rclcpp::spin(self->shared_from_this());
+    } catch (const std::exception & error) {
+      self->log(error.what());
+      self->failed_.store(true);
+      self->request_stop();
+    }
     return nullptr;
   }
 
@@ -189,7 +244,7 @@ private:
     pthread_cond_broadcast(&pose_changed_);
     pthread_mutex_unlock(&pose_mutex_);
 
-    pthread_mutex_lock(&fleet_->mutex);
+    fleet_posix::lock_fleet_state(fleet_);
     auto & robot = fleet_->robots[id_ - 1];
     robot.x = pose.x;
     robot.y = pose.y;
@@ -197,43 +252,109 @@ private:
     pthread_mutex_unlock(&fleet_->mutex);
   }
 
+  bool is_running() const
+  {
+    if (!running_.load() || g_stop_requested || !rclcpp::ok()) {
+      return false;
+    }
+    fleet_posix::lock_fleet_state(fleet_);
+    const bool shutdown = fleet_->shutdown_requested != 0;
+    pthread_mutex_unlock(&fleet_->mutex);
+    return !shutdown;
+  }
+
+  bool shutdown_requested() const
+  {
+    return !is_running();
+  }
+
+  void request_stop()
+  {
+    if (running_.exchange(false)) {
+      // Acorda o consumidor ocioso; shutdown nao depende de espaco no buffer.
+      sem_post(&command_buffer_.used_slots);
+      pthread_mutex_lock(&pose_mutex_);
+      pthread_cond_broadcast(&pose_changed_);
+      pthread_mutex_unlock(&pose_mutex_);
+    }
+  }
+
   void receive_commands()
   {
-    while (running_.load()) {
+    while (!shutdown_requested()) {
+      pollfd descriptor{static_cast<int>(command_queue_), POLLIN, 0};
+      const int ready = poll(&descriptor, 1, 100);
+      if (ready == -1 && errno == EINTR) {
+        continue;
+      }
+      if (ready < 0 || (descriptor.revents & (POLLERR | POLLNVAL))) {
+        log("erro ao aguardar fila POSIX");
+        failed_.store(true);
+        break;
+      }
+      if (ready == 0) {
+        continue;
+      }
       fleet_posix::Command command{};
       const ssize_t received = mq_receive(
         command_queue_, reinterpret_cast<char *>(&command), sizeof(command), nullptr);
-      if (received < 0 && errno == EINTR) {
+      if (received < 0 && (errno == EINTR || errno == EAGAIN)) {
         continue;
       }
-      if (received < 0) {
-        log("erro em mq_receive");
+      if (received != static_cast<ssize_t>(sizeof(command))) {
+        log("erro ou tamanho invalido em mq_receive");
+        failed_.store(true);
         break;
       }
-
-      if (command.type == fleet_posix::CommandType::kPause) {
-        paused_.store(true);
-        set_mode(fleet_posix::RobotMode::kPaused);
-        publish_stop();
-        log("pausado pelo operador");
+      if (command.robot_id != static_cast<std::uint32_t>(id_)) {
+        log("comando destinado a outro AMR recusado");
         continue;
       }
-      if (command.type == fleet_posix::CommandType::kResume) {
-        paused_.store(false);
-        log("retomado pelo operador");
-        continue;
-      }
-
-      enqueue(command);
       if (command.type == fleet_posix::CommandType::kShutdown) {
         break;
       }
+      if (command.type == fleet_posix::CommandType::kPause ||
+        command.type == fleet_posix::CommandType::kResume)
+      {
+        const bool pause = command.type == fleet_posix::CommandType::kPause;
+        pthread_mutex_lock(&motion_mutex_);
+        paused_.store(pause);
+        if (pause && rclcpp::ok()) {
+          velocity_publisher_->publish(geometry_msgs::msg::Twist());
+        }
+        pthread_mutex_unlock(&motion_mutex_);
+        fleet_posix::lock_fleet_state(fleet_);
+        auto & robot = fleet_->robots[id_ - 1];
+        robot.mode = pause ? fleet_posix::RobotMode::kPaused :
+          (robot.current_mission == 0 ? fleet_posix::RobotMode::kIdle :
+          (fleet_->corridor_owner == id_ ? fleet_posix::RobotMode::kInCorridor :
+          fleet_posix::RobotMode::kMoving));
+        pthread_mutex_unlock(&fleet_->mutex);
+        log(pause ? "pausado pelo operador" : "retomado pelo operador");
+        continue;
+      }
+      if (command.type == fleet_posix::CommandType::kMission) {
+        enqueue(command);
+      }
     }
+    request_stop();
   }
 
   void enqueue(const fleet_posix::Command & command)
   {
-    while (sem_wait(&command_buffer_.free_slots) == -1 && errno == EINTR) {}
+    int result;
+    do {
+      result = sem_trywait(&command_buffer_.free_slots);
+    } while (result == -1 && errno == EINTR);
+    if (result == -1) {
+      if (errno == EAGAIN) {
+        log("buffer de missoes cheio: missao recusada");
+      } else {
+        failed_.store(true);
+        request_stop();
+      }
+      return;
+    }
     pthread_mutex_lock(&command_buffer_.mutex);
     command_buffer_.commands[command_buffer_.tail] = command;
     command_buffer_.tail =
@@ -242,28 +363,34 @@ private:
     sem_post(&command_buffer_.used_slots);
   }
 
-  fleet_posix::Command dequeue()
+  bool dequeue(fleet_posix::Command & command)
   {
-    while (sem_wait(&command_buffer_.used_slots) == -1 && errno == EINTR) {}
+    int result;
+    do {
+      result = sem_wait(&command_buffer_.used_slots);
+    } while (result == -1 && errno == EINTR && is_running());
+    if (!is_running()) {
+      return false;
+    }
+    if (result == -1) {
+      failed_.store(true);
+      request_stop();
+      return false;
+    }
     pthread_mutex_lock(&command_buffer_.mutex);
-    const auto command = command_buffer_.commands[command_buffer_.head];
+    command = command_buffer_.commands[command_buffer_.head];
     command_buffer_.head =
       (command_buffer_.head + 1) % fleet_posix::kCommandQueueCapacity;
     pthread_mutex_unlock(&command_buffer_.mutex);
     sem_post(&command_buffer_.free_slots);
-    return command;
+    return true;
   }
 
   void control_loop()
   {
-    while (running_.load()) {
-      const auto command = dequeue();
-      if (command.type == fleet_posix::CommandType::kShutdown) {
-        running_.store(false);
-        pthread_cond_broadcast(&pose_changed_);
-        break;
-      }
-      if (command.type == fleet_posix::CommandType::kMission) {
+    fleet_posix::Command command{};
+    while (dequeue(command)) {
+      if (is_running() && command.type == fleet_posix::CommandType::kMission) {
         execute_mission(command);
       }
     }
@@ -271,7 +398,7 @@ private:
 
   void execute_mission(const fleet_posix::Command & command)
   {
-    pthread_mutex_lock(&fleet_->mutex);
+    fleet_posix::lock_fleet_state(fleet_);
     fleet_->robots[id_ - 1].current_mission = command.mission_id;
     pthread_mutex_unlock(&fleet_->mutex);
     set_mode(fleet_posix::RobotMode::kMoving);
@@ -280,18 +407,16 @@ private:
     bool corridor_held = false;
     bool entered_core = false;
     std::uint64_t seen_generation = 0;
-    while (running_.load()) {
-      if (paused_.load()) {
-        publish_stop();
-        std::this_thread::sleep_for(100ms);
-        continue;
-      }
-
+    while (is_running()) {
       const PoseSnapshot pose = wait_for_pose(seen_generation);
       if (!pose.valid) {
         continue;
       }
       seen_generation = pose.generation;
+      if (paused_.load()) {
+        publish_stop();
+        continue;
+      }
       const double goal_distance = std::hypot(command.target_x - pose.x, command.target_y - pose.y);
       const double center_distance = std::hypot(
         fleet_posix::kCorridorCenterX - pose.x,
@@ -303,12 +428,28 @@ private:
         publish_stop();
         set_mode(fleet_posix::RobotMode::kWaitingCorridor);
         log("aguardando sem_wait do corredor");
-        while (sem_wait(&fleet_->corridor) == -1 && errno == EINTR) {}
-        if (!running_.load()) {
-          break;
+        bool acquired = false;
+        while (is_running() && !paused_.load()) {
+          const timespec deadline = deadline_after(100000000);
+          if (sem_timedwait(&fleet_->corridor, &deadline) == 0) {
+            acquired = true;
+            break;
+          }
+          if (errno != EINTR && errno != ETIMEDOUT) {
+            failed_.store(true);
+            request_stop();
+            break;
+          }
+        }
+        if (!acquired) {
+          continue;
+        }
+        if (!is_running() || paused_.load()) {
+          sem_post(&fleet_->corridor);
+          continue;
         }
         corridor_held = true;
-        pthread_mutex_lock(&fleet_->mutex);
+        fleet_posix::lock_fleet_state(fleet_);
         fleet_->corridor_owner = id_;
         pthread_mutex_unlock(&fleet_->mutex);
         set_mode(fleet_posix::RobotMode::kInCorridor);
@@ -331,7 +472,7 @@ private:
         if (corridor_held) {
           release_corridor();
         }
-        pthread_mutex_lock(&fleet_->mutex);
+        fleet_posix::lock_fleet_state(fleet_);
         auto & robot = fleet_->robots[id_ - 1];
         ++robot.completed_missions;
         robot.current_mission = 0;
@@ -347,7 +488,11 @@ private:
       geometry_msgs::msg::Twist velocity;
       velocity.linear.x = std::abs(heading_error) < 0.55 ? 1.8 : 0.0;
       velocity.angular.z = std::clamp(4.0 * heading_error, -3.0, 3.0);
-      velocity_publisher_->publish(velocity);
+      pthread_mutex_lock(&motion_mutex_);
+      if (is_running() && !paused_.load()) {
+        velocity_publisher_->publish(velocity);
+      }
+      pthread_mutex_unlock(&motion_mutex_);
     }
 
     publish_stop();
@@ -359,15 +504,13 @@ private:
   PoseSnapshot wait_for_pose(std::uint64_t previous_generation)
   {
     pthread_mutex_lock(&pose_mutex_);
-    while (running_.load() && pose_.generation == previous_generation) {
-      timespec deadline{};
-      clock_gettime(CLOCK_REALTIME, &deadline);
-      deadline.tv_nsec += 200000000;
-      if (deadline.tv_nsec >= 1000000000) {
-        ++deadline.tv_sec;
-        deadline.tv_nsec -= 1000000000;
+    while (is_running() && pose_.generation == previous_generation) {
+      const timespec deadline = deadline_after(200000000);
+      const int result = pthread_cond_timedwait(&pose_changed_, &pose_mutex_, &deadline);
+      if (result == ETIMEDOUT) {
+        pthread_mutex_unlock(&pose_mutex_);
+        return PoseSnapshot{};
       }
-      pthread_cond_timedwait(&pose_changed_, &pose_mutex_, &deadline);
     }
     const PoseSnapshot result = pose_;
     pthread_mutex_unlock(&pose_mutex_);
@@ -376,7 +519,7 @@ private:
 
   void release_corridor()
   {
-    pthread_mutex_lock(&fleet_->mutex);
+    fleet_posix::lock_fleet_state(fleet_);
     if (fleet_->corridor_owner == id_) {
       fleet_->corridor_owner = 0;
     }
@@ -387,14 +530,18 @@ private:
 
   void set_mode(fleet_posix::RobotMode mode)
   {
-    pthread_mutex_lock(&fleet_->mutex);
-    fleet_->robots[id_ - 1].mode = mode;
+    fleet_posix::lock_fleet_state(fleet_);
+    fleet_->robots[id_ - 1].mode = paused_.load() ? fleet_posix::RobotMode::kPaused : mode;
     pthread_mutex_unlock(&fleet_->mutex);
   }
 
   void publish_stop()
   {
-    velocity_publisher_->publish(geometry_msgs::msg::Twist());
+    pthread_mutex_lock(&motion_mutex_);
+    if (rclcpp::ok()) {
+      velocity_publisher_->publish(geometry_msgs::msg::Twist());
+    }
+    pthread_mutex_unlock(&motion_mutex_);
   }
 
   void log(const char * text)
@@ -424,8 +571,10 @@ private:
   std::string turtle_name_;
   std::atomic<bool> running_{true};
   std::atomic<bool> paused_{false};
-  pthread_mutex_t pose_mutex_;
-  pthread_cond_t pose_changed_;
+  std::atomic<bool> failed_{false};
+  pthread_mutex_t pose_mutex_ = PTHREAD_MUTEX_INITIALIZER;
+  pthread_mutex_t motion_mutex_ = PTHREAD_MUTEX_INITIALIZER;
+  pthread_cond_t pose_changed_ = PTHREAD_COND_INITIALIZER;
   PoseSnapshot pose_{};
   CommandBuffer command_buffer_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr velocity_publisher_;
@@ -438,19 +587,26 @@ bool parse_arguments(
   int argc, char * argv[], int * id, std::string * shm_name,
   std::string * queue_name, int * log_fd)
 {
-  for (int index = 1; index + 1 < argc; index += 2) {
-    const std::string option = argv[index];
-    if (option == "--id") {
-      *id = std::stoi(argv[index + 1]);
-    } else if (option == "--shm") {
-      *shm_name = argv[index + 1];
-    } else if (option == "--queue") {
-      *queue_name = argv[index + 1];
-    } else if (option == "--log-fd") {
-      *log_fd = std::stoi(argv[index + 1]);
-    } else {
-      return false;
+  if (argc % 2 == 0) {
+    return false;
+  }
+  try {
+    for (int index = 1; index + 1 < argc; index += 2) {
+      const std::string option = argv[index];
+      if (option == "--id") {
+        *id = std::stoi(argv[index + 1]);
+      } else if (option == "--shm") {
+        *shm_name = argv[index + 1];
+      } else if (option == "--queue") {
+        *queue_name = argv[index + 1];
+      } else if (option == "--log-fd") {
+        *log_fd = std::stoi(argv[index + 1]);
+      } else {
+        return false;
+      }
     }
+  } catch (const std::exception &) {
+    return false;
   }
   return *id >= 1 && *id <= 3 && !shm_name->empty() && !queue_name->empty() && *log_fd >= 0;
 }
@@ -482,16 +638,29 @@ int main(int argc, char * argv[])
     return EXIT_FAILURE;
   }
 
-  const mqd_t queue = mq_open(queue_name.c_str(), O_RDONLY);
+  const mqd_t queue = mq_open(queue_name.c_str(), O_RDONLY | O_NONBLOCK);
   if (queue == static_cast<mqd_t>(-1)) {
     std::perror("agent mq_open");
     munmap(fleet, sizeof(*fleet));
     return EXIT_FAILURE;
   }
 
-  rclcpp::init(argc, argv);
-  auto agent = std::make_shared<AmrAgent>(id, fleet, queue, log_fd);
-  const int result = agent->spawn_turtle() ? agent->run() : EXIT_FAILURE;
+  struct sigaction action{};
+  action.sa_handler = signal_handler;
+  sigemptyset(&action.sa_mask);
+  sigaction(SIGINT, &action, nullptr);
+  sigaction(SIGTERM, &action, nullptr);
+  std::signal(SIGPIPE, SIG_IGN);
+
+  int result = EXIT_FAILURE;
+  std::shared_ptr<AmrAgent> agent;
+  try {
+    rclcpp::init(argc, argv, rclcpp::InitOptions(), rclcpp::SignalHandlerOptions::None);
+    agent = std::make_shared<AmrAgent>(id, fleet, queue, log_fd);
+    result = agent->spawn_turtle() ? agent->run() : EXIT_FAILURE;
+  } catch (const std::exception & error) {
+    std::fprintf(stderr, "Falha no AMR %d: %s\n", id, error.what());
+  }
   if (rclcpp::ok()) {
     rclcpp::shutdown();
   }

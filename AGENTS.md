@@ -57,6 +57,8 @@ fleet_posix_ws/
         ├── include/fleet_posix/common.hpp
         ├── src/supervisor.cpp
         ├── src/amr_agent.cpp
+        ├── test/test_integration.py
+        ├── test/test_shared_state.cpp
         └── scripts/demo.sh
 ```
 
@@ -114,6 +116,17 @@ O semaforo do corredor fica dentro da memoria compartilhada e usa
 `sem_init(..., 1, 1)`, portanto e compartilhado entre processos. Os semaforos
 do buffer de cada agente usam `pshared=0`, pois sincronizam threads locais.
 
+O mutex de `FleetState` usa `PTHREAD_PROCESS_SHARED` e `PTHREAD_MUTEX_ROBUST`.
+Use `lock_fleet_state()` para adquirir esse mutex, tratando `EOWNERDEAD` para
+permitir o encerramento e a limpeza apos morte de um filho. A recuperacao do
+mutex nao implica retomar uma missao interrompida.
+
+O supervisor verifica colisoes tanto em `--demo` quanto no modo online. O
+terminal usa `poll`/`read`, mantendo o monitoramento ativo sem nova entrada.
+Filas POSIX e insercao no buffer local nao bloqueiam quando cheias: comandos
+ou missoes sao recusados com aviso. Pausa, retomada e shutdown nao aguardam
+espaco no buffer de missoes.
+
 ## IPC e ciclo de vida
 
 Os nomes dos objetos POSIX incluem o PID do supervisor:
@@ -135,6 +148,12 @@ Toda saida normal deve:
 5. fechar e remover filas com `mq_close`/`mq_unlink`;
 6. destruir mutex e semaforo compartilhados;
 7. executar `munmap` e `shm_unlink`.
+
+O shutdown cancela a missao ativa e as pendentes. O agente acorda seu consumidor
+com `sem_post` e sua espera por pose com `pthread_cond_broadcast`. A espera do
+corredor usa `sem_timedwait`, verificando cancelamento entre tentativas.
+O supervisor limita a espera pelos filhos e usa `SIGTERM`/`SIGKILL` como
+contingencia. A limpeza de IPC tambem cobre falhas parciais de inicializacao.
 
 Nao altere o layout de `Command`, `FleetState` ou `LogEvent` em apenas um dos
 executaveis. Ambos incluem `common.hpp` justamente para manter o contrato
@@ -197,6 +216,8 @@ source /opt/ros/jazzy/setup.bash
 rosdep check --from-paths src --ignore-src --rosdistro jazzy
 colcon build --symlink-install --event-handlers console_direct+
 ament_uncrustify src/fleet_posix/src src/fleet_posix/include
+colcon test --event-handlers console_direct+ --return-code-on-test-failure
+colcon test-result --verbose
 ```
 
 O build usa `-Wall -Wextra -Wpedantic -Werror`. Nao remova `-Werror` apenas para
@@ -256,6 +277,26 @@ Validacao realizada em 2026-11-17:
 Ao fazer mudancas funcionais, atualize esta evidencia apenas depois de repetir
 as validacoes relevantes.
 
+Revalidacao realizada em 2026-11-20, apos as correcoes de ciclo de vida:
+
+- Ubuntu 24.04, ROS 2 Jazzy, Turtlesim 1.8.4 e GCC 13.3;
+- compilacao com `-Wall -Wextra -Wpedantic -Werror` concluida;
+- `ament_uncrustify` sem divergencias nos fontes, headers e teste C++;
+- duas entradas CTest aprovadas: 11 cenarios Python de integracao e um teste
+  C++ de recuperacao do mutex apos morte do proprietario;
+- modo seguro offscreen: 3 missoes concluidas e 0 colisoes;
+- modo inseguro offscreen: 3 missoes concluidas e 2 colisoes logicas;
+- modo online inseguro contabiliza colisoes sem exigir nova entrada no terminal;
+- shutdown com proprietario pausado, agentes esperando e buffer cheio aprovado;
+- `SIGINT`, `SIGTERM`, morte de agente e falha do Turtlesim exercitados;
+- falhas por limite de descritores nao deixam memoria nem filas residuais;
+- execucao grafica no WSLg concluida: 3 missoes e 0 colisoes;
+- nenhum processo da frota nem objeto `fleet_posix_*` residual ao terminar;
+- script testado pelos fontes e pela instalacao, a partir de outro diretorio;
+- apresentacao de seis paginas em `docs/FleetPOSIX_apresentacao.pdf`;
+- `rosdep check` nao repetido: `rosdep` nao esta instalado neste ambiente;
+  as dependencias CMake foram encontradas durante a compilacao.
+
 ## Regras para alteracoes
 
 1. Preserve o `dgbot_ws`; este e um workspace separado.
@@ -274,11 +315,7 @@ as validacoes relevantes.
 
 - escolher a licenca e substituir o `TODO` no `package.xml`;
 - substituir mantenedor e email pelos dados da equipe;
-- inicializar/publicar o repositorio Git, se ainda nao estiver versionado;
-- criar os slides de 4 a 7 paginas;
-- adicionar testes automatizados que nao dependam da interface grafica;
-- melhorar tratamento e limpeza de erros durante inicializacao parcial;
-- considerar mutex compartilhado robusto para recuperacao de processo morto;
+- instalar/inicializar `rosdep` e repetir sua verificacao separada de dependencias;
 - documentar a divisao de trabalho dos integrantes.
 
 Essas pendencias nao invalidam a demonstracao atual, mas devem ser consideradas

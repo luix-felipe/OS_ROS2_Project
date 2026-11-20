@@ -13,6 +13,9 @@
   <depend>rclcpp</depend>
   <depend>turtlesim</depend>
 
+  <test_depend>ament_cmake_test</test_depend>
+  <test_depend>python3</test_depend>
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>

@@ -36,4 +36,26 @@ install(FILES README.md
   DESTINATION share/${PROJECT_NAME}
 )
 
+if(BUILD_TESTING)
+  find_package(ament_cmake_test REQUIRED)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_executable(test_shared_state test/test_shared_state.cpp)
+  target_compile_features(test_shared_state PRIVATE cxx_std_17)
+  target_include_directories(test_shared_state PRIVATE include)
+  target_link_libraries(test_shared_state Threads::Threads rt)
+  ament_add_test(fleet_posix_shared_state
+    COMMAND "$<TARGET_FILE:test_shared_state>"
+    TIMEOUT 10
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO
+  )
+  ament_add_test(fleet_posix_integration
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test/test_integration.py"
+      --supervisor "$<TARGET_FILE:fleet_supervisor>"
+      --agent "$<TARGET_FILE:amr_agent>"
+      --log-dir "${CMAKE_CURRENT_BINARY_DIR}/test_logs"
+    TIMEOUT 180
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO
+  )
+endif()
+
 ament_package()
