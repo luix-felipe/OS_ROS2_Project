@@ -19,9 +19,11 @@ solucao.
 
 | Integrante | Responsabilidade |
 | --- | --- |
-| _(preencher)_ | _(preencher)_ |
-| _(preencher)_ | _(preencher)_ |
-| _(preencher)_ | _(preencher)_ |
+| Luiz Felipe Souza da Silva | Base do projeto e repositorio GitHub; mantenedor do pacote |
+| Elian Lima Pereira | Concepcao e desenvolvimento do projeto |
+| Diogo de Mello Silva | Revisao tecnica e correcoes |
+
+Projeto academico, sem licenca de codigo aberto.
 
 ## Arquitetura
 
@@ -205,7 +207,7 @@ artefatos locais nao comprova que o codigo atual passou nas verificacoes.
 | Automacao Make | Validada | make -j4 verify e make simulate aprovados; propagacao de falhas e limpeza conferidas. |
 | Apresentacao | Pronta | Seis paginas em docs/FleetPOSIX_apresentacao.pdf. |
 | Dependencias via rosdep | Pendente no ambiente | Instalar/inicializar rosdep e executar make deps. |
-| Dados da equipe e licenca | Parcial | Mantenedor definido (Luiz Felipe). Falta preencher a secao Equipe e escolher a licenca no package.xml. |
+| Dados da equipe e licenca | Concluido | Equipe e divisao de trabalho na secao Equipe; sem licenca (Proprietary no package.xml). |
 <!-- andamento:fim -->
 
 Para acompanhar outra copia ou apos alterar os fontes, execute `make status`
@@ -219,8 +221,9 @@ para a disciplina estao em [`src/fleet_posix/README.md`](src/fleet_posix/README.
 
 - Apresentacao de seis paginas: [`docs/FleetPOSIX_apresentacao.pdf`](docs/FleetPOSIX_apresentacao.pdf).
 - Gerador editavel dos slides: [`docs/generate_slides.py`](docs/generate_slides.py).
-- Mantenedor no `package.xml`: Luiz Felipe (luix.felipe008@gmail.com). A licenca ainda precisa ser escolhida pela equipe.
-- A equipe deve registrar os integrantes e sua divisao de trabalho antes da entrega.
+- Mantenedor no `package.xml`: Luiz Felipe Souza da Silva (luix.felipe008@gmail.com).
+- Integrantes e divisao de trabalho: secao [Equipe](#equipe).
+- Sem licenca de codigo aberto (`Proprietary` no `package.xml`).
 
 Os slides incluem os resultados de `make verify`, o andamento e as pendencias,
 e o roteiro Make para conferir o ambiente, testar e executar as simulacoes.

@@ -368,9 +368,7 @@ Revisao realizada em 2026-11-21 (ROS 2 Jazzy via RoboStack, GCC 13, uncrustify 0
 
 ## Pendencias conhecidas
 
-- escolher a licenca e substituir o `TODO` no `package.xml`;
 - instalar/inicializar `rosdep` e repetir sua verificacao separada de dependencias;
-- documentar a divisao de trabalho dos integrantes.
 
 Essas pendencias nao invalidam a demonstracao atual, mas devem ser consideradas
 antes da entrega final.

@@ -21,7 +21,7 @@ LIGHT = '#E1EAF4'
 DESTINATION = Path(__file__).with_name('FleetPOSIX_apresentacao.pdf')
 PDF = canvas.Canvas(str(DESTINATION), pagesize=(WIDTH, HEIGHT))
 PDF.setTitle('FleetPOSIX - Concorrencia e IPC POSIX')
-PDF.setAuthor('Equipe FleetPOSIX')
+PDF.setAuthor('Luiz Felipe Souza da Silva, Elian Lima Pereira e Diogo de Mello Silva')
 
 
 def rect(x, y, width, height, fill, radius=10):
@@ -102,6 +102,7 @@ lines(60, 286, ['Operador envia missões durante a execução.',
 rect(60, 101, 480, 58, NAVY)
 text(78, 123, 'Controle: POSIX   |   Pose e visualização: ROS 2', 17, WHITE, 'Helvetica-Bold')
 text(60, 72, 'Ubuntu 24.04 / WSL 2   •   ROS 2 Jazzy   •   C++17', 13, MUTED)
+text(60, 48, 'Equipe: Luiz Felipe Souza da Silva  •  Elian Lima Pereira  •  Diogo de Mello Silva', 12, INK, 'Helvetica-Bold')
 map_routes(605, 109, 26)
 PDF.showPage()
 
@@ -164,7 +165,7 @@ text(81, 158, '13 cenários automatizados, organizados em duas entradas CTest', 
 lines(81, 127, ['Sinais, FIFO, corredor ocupado, falhas de IPC, morte de processo e mutex robusto.',
                 'Cada execução verifica ausência de processos e objetos IPC residuais.'],
       size=14, gap=23, color=WHITE)
-text(60, 55, 'MVP e automações validados. Pendências: checagem rosdep, licença e dados da equipe.', 13, MUTED)
+text(60, 55, 'MVP, automações e documentação validados. Pendência opcional: checagem via rosdep.', 13, MUTED)
 PDF.showPage()
 
 begin(6, 'Automação e demonstração com Make',

@@ -3,8 +3,13 @@
   <name>fleet_posix</name>
   <version>0.1.0</version>
   <description>Orquestracao POSIX de tres AMRs visualizados no Turtlesim.</description>
-  <maintainer email="luix.felipe008@gmail.com">Luiz Felipe</maintainer>
-  <license>TODO: escolher antes da entrega</license>
+  <maintainer email="luix.felipe008@gmail.com">Luiz Felipe Souza da Silva</maintainer>
+  <!-- Sem licenca de codigo aberto: o campo e obrigatorio no formato 3 do package.xml. -->
+  <license>Proprietary</license>
+
+  <author>Luiz Felipe Souza da Silva</author>
+  <author>Elian Lima Pereira</author>
+  <author>Diogo de Mello Silva</author>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
