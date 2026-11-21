@@ -19,8 +19,8 @@ solucao.
 
 | Integrante | Responsabilidade |
 | --- | --- |
-| Luiz Felipe Souza da Silva | Base do projeto e repositorio GitHub; mantenedor do pacote |
-| Elian Lima Pereira | Concepcao e desenvolvimento do projeto |
+| Luiz Felipe Souza da Silva | Concepcao e desenvolvimento do projeto (junto com Elian), base do codigo e repositorio GitHub; mantenedor do pacote |
+| Elian Lima Pereira | Concepcao e desenvolvimento do projeto (junto com Luiz) |
 | Diogo de Mello Silva | Revisao tecnica e correcoes |
 
 Projeto academico, sem licenca de codigo aberto.
