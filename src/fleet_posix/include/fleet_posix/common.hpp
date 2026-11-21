@@ -20,6 +20,7 @@ constexpr double kCorridorCenterY = 5.5;
 constexpr double kCorridorAcquireRadius = 2.35;
 constexpr double kCorridorCoreRadius = 1.35;
 
+// Tipos de comando enviados pelas filas POSIX.
 enum class CommandType : std::uint32_t
 {
   kMission = 1,
@@ -28,6 +29,7 @@ enum class CommandType : std::uint32_t
   kShutdown = 4,
 };
 
+// Estados de um AMR.
 enum class RobotMode : std::uint32_t
 {
   kStarting = 0,
@@ -39,6 +41,7 @@ enum class RobotMode : std::uint32_t
   kStopped = 6,
 };
 
+// Mensagem das filas de comandos.
 struct Command
 {
   CommandType type;
@@ -48,6 +51,7 @@ struct Command
   std::uint32_t mission_id;
 };
 
+// Estado de um AMR na memoria compartilhada.
 struct RobotState
 {
   pid_t pid;
@@ -60,6 +64,7 @@ struct RobotState
   std::uint32_t completed_missions;
 };
 
+// Estado da frota na memoria compartilhada.
 struct FleetState
 {
   pthread_mutex_t mutex;
@@ -71,6 +76,7 @@ struct FleetState
   RobotState robots[kRobotCount];
 };
 
+// Evento de log enviado pelo pipe.
 struct LogEvent
 {
   pid_t pid;
@@ -80,6 +86,7 @@ struct LogEvent
 
 static_assert(sizeof(LogEvent) < PIPE_BUF, "LogEvent deve caber em uma escrita atomica no pipe");
 
+// Trava o mutex robusto da frota, recuperando-o se o dono morreu.
 inline void lock_fleet_state(FleetState * state)
 {
   int result = pthread_mutex_lock(&state->mutex);
@@ -94,6 +101,7 @@ inline void lock_fleet_state(FleetState * state)
   }
 }
 
+// Nome legivel de um estado do AMR.
 inline const char * mode_name(RobotMode mode)
 {
   switch (mode) {

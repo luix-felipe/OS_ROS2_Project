@@ -21,6 +21,7 @@ LIBC = ctypes.CDLL(None)
 TARGETS = 'enviar 1 9.0 5.15\nenviar 2 5.5 9.0\nenviar 3 2.0 5.85\n'
 
 
+# Desativa core dumps nos processos de teste.
 def disable_core_dumps():
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
@@ -28,10 +29,12 @@ def disable_core_dumps():
 class Fleet:
     """Limita cada execucao e preserva o log, inclusive quando um teste falha."""
 
+    # Inicia o supervisor com limites e log proprios.
     def __init__(self, name, *args, env=None, descriptor_limit=None):
         self.path = OPTIONS.log_dir / (name + '.log')
         self.log = self.path.open('w')
 
+        # Aplica os limites no processo filho antes do exec.
         def configure_child():
             disable_core_dumps()
             if descriptor_limit is not None:
@@ -44,9 +47,11 @@ class Fleet:
         )
         self.pid = self.process.pid
 
+    # Entra no contexto do teste.
     def __enter__(self):
         return self
 
+    # Encerra o grupo de processos e remove IPC residual.
     def __exit__(self, exc_type, exc_value, traceback):
         # Nao toca processos ou objetos de outras execucoes do workspace.
         try:
@@ -67,6 +72,7 @@ class Fleet:
         if exc_type is not None:
             print(f'\nLog da falha: {self.path}\n{self.text()}', flush=True)
 
+    # Caminho do FIFO de comandos desta execucao.
     def fifo_path(self):
         return Path(f'/tmp/fleet_posix_ctl_{self.pid}')
 
@@ -80,9 +86,11 @@ class Fleet:
         with self.fifo_path().open('w') as fifo:
             fifo.write(commands)
 
+    # Conteudo atual do log.
     def text(self):
         return self.path.read_text()
 
+    # Aguarda um texto aparecer no log ate o prazo.
     def wait_log(self, token, count=1, timeout=15):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -94,13 +102,16 @@ class Fleet:
             time.sleep(0.02)
         raise AssertionError(f'Prazo excedido aguardando {token!r}:\n{self.text()}')
 
+    # Aguarda os tres AMRs ficarem online.
     def online(self):
         self.wait_log('online e pronto', count=3)
 
+    # Envia comandos pelo stdin do supervisor.
     def send(self, commands):
         self.process.stdin.write(commands)
         self.process.stdin.flush()
 
+    # Aguarda o termino e verifica codigo de saida, processos e IPC.
     def finish(self, expected=0, timeout=5):
         result = self.process.wait(timeout=timeout)
         contents = self.text()
@@ -122,7 +133,9 @@ class Fleet:
         return contents
 
 
+# Cenarios de integracao da frota.
 class IntegrationTests(unittest.TestCase):
+    # Demo segura: tres missoes e nenhuma colisao.
     def test_demo_safe(self):
         with Fleet('demo_safe', '--demo') as fleet:
             log = fleet.finish(timeout=35)
@@ -130,6 +143,7 @@ class IntegrationTests(unittest.TestCase):
             self.assertNotIn('[DETECTOR]', log)
             self.assertEqual(log.count('threads finalizadas com pthread_join'), 3)
 
+    # Demo insegura: tres missoes e colisoes detectadas.
     def test_demo_unsafe(self):
         with Fleet('demo_unsafe', '--unsafe', '--demo') as fleet:
             log = fleet.finish(timeout=35)
@@ -137,6 +151,7 @@ class IntegrationTests(unittest.TestCase):
             self.assertIn('[DETECTOR]', log)
             self.assertRegex(log, r'colisoes=[1-9]\d*')
 
+    # Detector de colisoes ativo sem novas entradas.
     def test_online_collision_detection_without_input(self):
         with Fleet('online_collision', '--unsafe') as fleet:
             fleet.online()
@@ -146,6 +161,7 @@ class IntegrationTests(unittest.TestCase):
             fleet.send('status\nsair\n')
             self.assertRegex(fleet.finish(), r'colisoes=[1-9]\d*')
 
+    # Shutdown com dono do corredor pausado e AMRs aguardando.
     def test_shutdown_with_paused_owner_and_corridor_waiters(self):
         with Fleet('paused_owner') as fleet:
             fleet.online()
@@ -160,6 +176,7 @@ class IntegrationTests(unittest.TestCase):
             self.assertIn('liberou o corredor', log)
             self.assertEqual(log.count('threads finalizadas com pthread_join'), 3)
 
+    # Comandos pelo FIFO e recusa de destino na regiao critica.
     def test_fifo_control_channel_and_corridor_destination(self):
         with Fleet('fifo_control') as fleet:
             fleet.online()
@@ -177,6 +194,7 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(log.count('[FIFO] enviar'), 4)
             self.assertEqual(log.count('threads finalizadas com pthread_join'), 3)
 
+    # Buffer cheio nao bloqueia retomada nem shutdown.
     def test_full_buffer_keeps_resume_and_shutdown_responsive(self):
         with Fleet('full_buffer') as fleet:
             fleet.online()
@@ -193,6 +211,7 @@ class IntegrationTests(unittest.TestCase):
             fleet.send('status\nsair\n')
             self.assertEqual(fleet.finish().count('threads finalizadas com pthread_join'), 3)
 
+    # SIGINT com linha incompleta no terminal.
     def test_sigint_idle_console_without_newline(self):
         with Fleet('sigint_idle') as fleet:
             fleet.online()
@@ -200,6 +219,7 @@ class IntegrationTests(unittest.TestCase):
             os.killpg(fleet.pid, signal.SIGINT)
             self.assertEqual(fleet.finish().count('threads finalizadas com pthread_join'), 3)
 
+    # SIGTERM com missao pausada.
     def test_sigterm_paused(self):
         with Fleet('sigterm_paused') as fleet:
             fleet.online()
@@ -210,6 +230,7 @@ class IntegrationTests(unittest.TestCase):
             os.kill(fleet.pid, signal.SIGTERM)
             self.assertEqual(fleet.finish().count('threads finalizadas com pthread_join'), 3)
 
+    # Limpeza apos falha parcial de IPC por limite de descritores.
     def test_partial_initialization_cleanup(self):
         # Com limite 3 o loader falha antes do main; 4..6 exercitam IPC parcial.
         for limit in (4, 5, 6):
@@ -218,12 +239,14 @@ class IntegrationTests(unittest.TestCase):
                     log = fleet.finish(expected=1)
                     self.assertIn('Too many open files', log)
 
+    # Falha ao iniciar o Turtlesim encerra a frota.
     def test_simulator_startup_failure(self):
         env = dict(ENV, QT_QPA_PLATFORM='fleet_posix_invalid_test_platform')
         with Fleet('simulator_failure', '--demo', env=env) as fleet:
             log = fleet.finish(expected=1, timeout=10)
             self.assertIn('Um processo filho terminou', log)
 
+    # Morte de um agente encerra a frota.
     def test_agent_crash_requests_shutdown(self):
         with Fleet('agent_crash') as fleet:
             fleet.online()
@@ -232,6 +255,7 @@ class IntegrationTests(unittest.TestCase):
             log = fleet.finish(expected=1)
             self.assertIn('Um processo filho terminou', log)
 
+    # Argumentos invalidos e execucao do demo.sh.
     def test_invalid_arguments_and_script_locations(self):
         result = subprocess.run(
             [str(OPTIONS.agent), '--id', 'abc', '--shm', '/unused',

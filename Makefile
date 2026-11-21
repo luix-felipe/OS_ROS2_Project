@@ -23,6 +23,7 @@ export ROS_DISTRO ROS_SETUP ROS_DOMAIN_ID PYTHON JOBS DEMO_TIMEOUT
 help status env deps lint format report ipc slides clean:
 	@bash scripts/workspace.sh $@
 
+# Compila o workspace.
 build:
 	@bash scripts/workspace.sh build
 

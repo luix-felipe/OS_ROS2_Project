@@ -6,6 +6,7 @@
 
 #include "fleet_posix/common.hpp"
 
+// Testa a recuperacao do mutex robusto apos a morte do processo dono.
 int main()
 {
   void * mapping = mmap(

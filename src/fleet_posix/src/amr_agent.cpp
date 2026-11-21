@@ -33,6 +33,7 @@ namespace
 
 volatile sig_atomic_t g_stop_requested = 0;
 
+// Marca pedido de parada ao receber SIGINT/SIGTERM.
 void signal_handler(int)
 {
   g_stop_requested = 1;
@@ -52,6 +53,7 @@ timespec deadline_after(long nanoseconds)
   return deadline;
 }
 
+// Normaliza um angulo para o intervalo [-pi, pi].
 double normalize_angle(double angle)
 {
   constexpr double pi = 3.14159265358979323846;
@@ -64,9 +66,11 @@ double normalize_angle(double angle)
   return angle;
 }
 
+// Processo de um AMR: tartaruga, fila de comandos e threads de controle.
 class AmrAgent : public rclcpp::Node
 {
 public:
+  // Inicializa semaforos do buffer, condicao de pose e interfaces ROS.
   AmrAgent(int id, fleet_posix::FleetState * fleet, mqd_t command_queue, int log_fd)
   : Node("amr_agent_" + std::to_string(id)),
     id_(id), fleet_(fleet), command_queue_(command_queue), log_fd_(log_fd),
@@ -99,6 +103,7 @@ public:
     kill_client_ = create_client<turtlesim::srv::Kill>("/kill");
   }
 
+  // Libera semaforos, mutexes e variavel de condicao.
   ~AmrAgent() override
   {
     sem_destroy(&command_buffer_.free_slots);
@@ -109,6 +114,7 @@ public:
     pthread_mutex_destroy(&motion_mutex_);
   }
 
+  // Cria a tartaruga no Turtlesim e marca o AMR como online.
   bool spawn_turtle()
   {
     const auto deadline = std::chrono::steady_clock::now() + 10s;
@@ -162,6 +168,7 @@ public:
     return true;
   }
 
+  // Cria as tres pthreads, aguarda o termino e publica o estado final.
   int run()
   {
     pthread_t threads[3]{};
@@ -201,6 +208,7 @@ public:
   }
 
 private:
+  // Copia da ultima pose recebida.
   struct PoseSnapshot
   {
     float x;
@@ -210,6 +218,7 @@ private:
     bool valid;
   };
 
+  // Buffer circular limitado do produtor-consumidor de missoes.
   struct CommandBuffer
   {
     fleet_posix::Command commands[fleet_posix::kCommandQueueCapacity];
@@ -220,6 +229,7 @@ private:
     pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
   };
 
+  // Thread que executa o spin do ROS.
   static void * ros_thread_entry(void * argument)
   {
     auto * self = static_cast<AmrAgent *>(argument);
@@ -233,18 +243,21 @@ private:
     return nullptr;
   }
 
+  // Thread produtora: recebe comandos da fila POSIX.
   static void * command_thread_entry(void * argument)
   {
     static_cast<AmrAgent *>(argument)->receive_commands();
     return nullptr;
   }
 
+  // Thread consumidora: executa as missoes do buffer.
   static void * control_thread_entry(void * argument)
   {
     static_cast<AmrAgent *>(argument)->control_loop();
     return nullptr;
   }
 
+  // Atualiza a pose local, sinaliza a condicao e grava na memoria compartilhada.
   void pose_callback(const turtlesim::msg::Pose & pose)
   {
     pthread_mutex_lock(&pose_mutex_);
@@ -264,6 +277,7 @@ private:
     pthread_mutex_unlock(&fleet_->mutex);
   }
 
+  // Indica se o agente e a frota continuam ativos.
   bool is_running() const
   {
     if (!running_.load() || g_stop_requested || !rclcpp::ok()) {
@@ -275,11 +289,13 @@ private:
     return !shutdown;
   }
 
+  // Indica se o encerramento foi solicitado.
   bool shutdown_requested() const
   {
     return !is_running();
   }
 
+  // Solicita parada e acorda as threads em espera.
   void request_stop()
   {
     if (running_.exchange(false)) {
@@ -291,6 +307,7 @@ private:
     }
   }
 
+  // Le a fila POSIX e trata missao, pausa, retomada e shutdown.
   void receive_commands()
   {
     while (!shutdown_requested()) {
@@ -352,6 +369,7 @@ private:
     request_stop();
   }
 
+  // Produz uma missao no buffer (recusa se cheio).
   void enqueue(const fleet_posix::Command & command)
   {
     int result;
@@ -375,6 +393,7 @@ private:
     sem_post(&command_buffer_.used_slots);
   }
 
+  // Consome a proxima missao do buffer, bloqueando ate haver uma.
   bool dequeue(fleet_posix::Command & command)
   {
     int result;
@@ -398,6 +417,7 @@ private:
     return true;
   }
 
+  // Executa as missoes enquanto o agente estiver ativo.
   void control_loop()
   {
     fleet_posix::Command command{};
@@ -408,6 +428,7 @@ private:
     }
   }
 
+  // Conduz o AMR ao destino, adquirindo o corredor no modo seguro.
   void execute_mission(const fleet_posix::Command & command)
   {
     fleet_posix::lock_fleet_state(fleet_);
@@ -513,6 +534,7 @@ private:
     }
   }
 
+  // Aguarda uma pose nova na variavel de condicao.
   PoseSnapshot wait_for_pose(std::uint64_t previous_generation)
   {
     pthread_mutex_lock(&pose_mutex_);
@@ -529,6 +551,7 @@ private:
     return result;
   }
 
+  // Libera o corredor com sem_post.
   void release_corridor()
   {
     fleet_posix::lock_fleet_state(fleet_);
@@ -540,6 +563,7 @@ private:
     log("liberou o corredor com sem_post");
   }
 
+  // Atualiza o modo do AMR na memoria compartilhada.
   void set_mode(fleet_posix::RobotMode mode)
   {
     fleet_posix::lock_fleet_state(fleet_);
@@ -547,6 +571,7 @@ private:
     pthread_mutex_unlock(&fleet_->mutex);
   }
 
+  // Publica velocidade zero.
   void publish_stop()
   {
     pthread_mutex_lock(&motion_mutex_);
@@ -556,6 +581,7 @@ private:
     pthread_mutex_unlock(&motion_mutex_);
   }
 
+  // Envia um evento de log ao supervisor pelo pipe.
   void log(const char * text)
   {
     fleet_posix::LogEvent event{};
@@ -595,6 +621,7 @@ private:
   rclcpp::Client<turtlesim::srv::Kill>::SharedPtr kill_client_;
 };
 
+// Le os argumentos internos passados pelo supervisor.
 bool parse_arguments(
   int argc, char * argv[], int * id, std::string * shm_name,
   std::string * queue_name, int * log_fd)
@@ -625,6 +652,7 @@ bool parse_arguments(
 
 }  // namespace
 
+// Abre memoria compartilhada e fila, inicia o ROS e executa o agente.
 int main(int argc, char * argv[])
 {
   int id = 0;

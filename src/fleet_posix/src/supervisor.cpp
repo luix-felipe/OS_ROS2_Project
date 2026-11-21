@@ -33,11 +33,13 @@ using fleet_posix::lock_fleet_state;
 
 volatile sig_atomic_t g_stop_requested = 0;
 
+// Marca pedido de parada ao receber SIGINT/SIGTERM.
 void signal_handler(int)
 {
   g_stop_requested = 1;
 }
 
+// Reporta o erro de uma chamada pthread.
 bool check_pthread(int result, const char * operation)
 {
   if (result == 0) {
@@ -48,9 +50,11 @@ bool check_pthread(int result, const char * operation)
   return false;
 }
 
+// Cria e remove os recursos de IPC da frota.
 class IpcResources
 {
 public:
+  // Define nomes unicos por PID para os objetos de IPC.
   IpcResources()
   : shm_name("/fleet_posix_state_" + std::to_string(getpid())),
     fifo_name("/tmp/fleet_posix_ctl_" + std::to_string(getpid()))
@@ -62,6 +66,7 @@ public:
     }
   }
 
+  // Fecha e remove filas, pipe, FIFO e memoria compartilhada.
   ~IpcResources()
   {
     for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
@@ -97,6 +102,7 @@ public:
     }
   }
 
+  // Cria memoria compartilhada, mutex, semaforo, filas e pipe.
   bool initialize(bool unsafe_mode)
   {
     const int shm_fd = shm_open(shm_name.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
@@ -210,6 +216,7 @@ private:
   int fifo_keepalive_fd_{-1};
 };
 
+// PID e status de um processo filho.
 struct ChildProcess
 {
   pid_t pid{-1};
@@ -217,6 +224,7 @@ struct ChildProcess
   bool reaped{false};
 };
 
+// Recolhe o filho com waitpid sem bloquear.
 bool reap_if_finished(ChildProcess & child)
 {
   if (child.pid <= 0 || child.reaped) {
@@ -229,6 +237,7 @@ bool reap_if_finished(ChildProcess & child)
   return child.reaped;
 }
 
+// Verifica se todos os filhos continuam em execucao.
 bool children_running(ChildProcess & turtlesim, ChildProcess agents[3])
 {
   bool running = !reap_if_finished(turtlesim);
@@ -241,6 +250,7 @@ bool children_running(ChildProcess & turtlesim, ChildProcess agents[3])
   return running;
 }
 
+// Aguarda o termino do filho ate o prazo.
 bool wait_for_child(ChildProcess & child, std::chrono::milliseconds timeout)
 {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -250,6 +260,7 @@ bool wait_for_child(ChildProcess & child, std::chrono::milliseconds timeout)
   return reap_if_finished(child);
 }
 
+// Encerra o filho, escalando de SIGTERM para SIGKILL.
 bool finish_child(ChildProcess & child, bool terminate)
 {
   if (child.pid <= 0) {
@@ -288,6 +299,7 @@ void detach_stdin()
   }
 }
 
+// Le exatamente size bytes do descritor.
 bool read_exact(int fd, void * destination, std::size_t size)
 {
   auto * cursor = static_cast<unsigned char *>(destination);
@@ -309,6 +321,7 @@ bool read_exact(int fd, void * destination, std::size_t size)
   return true;
 }
 
+// Thread que imprime os eventos recebidos pelo pipe.
 void * logger_thread(void * argument)
 {
   const int fd = *static_cast<int *>(argument);
@@ -321,6 +334,7 @@ void * logger_thread(void * argument)
   return nullptr;
 }
 
+// Envia um comando pela fila POSIX do AMR.
 bool send_command(mqd_t queue, const Command & command)
 {
   const unsigned int priority = command.type == CommandType::kMission ? 0U : 1U;
@@ -339,6 +353,7 @@ bool send_command(mqd_t queue, const Command & command)
   return true;
 }
 
+// Copia do estado da frota para impressao.
 struct StatusSnapshot
 {
   fleet_posix::RobotState robots[fleet_posix::kRobotCount];
@@ -347,6 +362,7 @@ struct StatusSnapshot
   int safe_mode;
 };
 
+// Imprime a tabela de estado da frota.
 void print_status(FleetState * state)
 {
   // Secao critica minima: copia o estado sob o mutex e imprime fora dele. Um
@@ -376,8 +392,10 @@ void print_status(FleetState * state)
     owner.c_str(), snapshot.collision_count, snapshot.safe_mode ? "SEGURO" : "INSEGURO");
 }
 
+// Conta e reporta colisoes logicas entre AMRs.
 void detect_collisions(FleetState * state, bool active_pairs[3][3])
 {
+  // Colisao detectada, impressa apos liberar o mutex.
   struct CollisionEvent
   {
     int first;
@@ -412,6 +430,7 @@ void detect_collisions(FleetState * state, bool active_pairs[3][3])
   }
 }
 
+// Indica se os tres AMRs estao online.
 bool all_robots_online(FleetState * state)
 {
   bool result = true;
@@ -423,6 +442,7 @@ bool all_robots_online(FleetState * state)
   return result;
 }
 
+// Indica se todos os AMRs concluiram uma missao.
 bool all_missions_complete(FleetState * state)
 {
   bool result = true;
@@ -434,6 +454,7 @@ bool all_missions_complete(FleetState * state)
   return result;
 }
 
+// Executa a demonstracao automatica com tres missoes.
 bool run_demo(IpcResources & ipc, ChildProcess & turtlesim, ChildProcess agents[3])
 {
   std::printf("Aguardando os tres agentes criarem suas tartarugas...\n");
@@ -489,6 +510,7 @@ bool run_demo(IpcResources & ipc, ChildProcess & turtlesim, ChildProcess agents[
   return false;
 }
 
+// Interpreta e executa um comando do operador.
 bool handle_console_line(
   const std::string & line, IpcResources & ipc, std::uint32_t & next_mission)
 {
@@ -595,6 +617,7 @@ bool drain_lines(
   return true;
 }
 
+// Operacao online: multiplexa stdin e FIFO com poll.
 bool run_console(IpcResources & ipc, ChildProcess & turtlesim, ChildProcess agents[3])
 {
   std::printf(
@@ -642,6 +665,7 @@ bool run_console(IpcResources & ipc, ChildProcess & turtlesim, ChildProcess agen
   return true;
 }
 
+// Cria IPC e processos, executa o modo escolhido e encerra a frota.
 int run_supervisor(bool demo_mode, bool unsafe_mode)
 {
   // Descoberta potencialmente falha precede a criacao de IPC e filhos.
@@ -749,6 +773,7 @@ int run_supervisor(bool demo_mode, bool unsafe_mode)
 
 }  // namespace
 
+// Le as opcoes, instala os sinais e inicia o supervisor.
 int main(int argc, char * argv[])
 {
   std::setvbuf(stdout, nullptr, _IOLBF, 0);

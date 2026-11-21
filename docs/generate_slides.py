@@ -24,22 +24,26 @@ PDF.setTitle('FleetPOSIX - Concorrencia e IPC POSIX')
 PDF.setAuthor('Luiz Felipe Souza da Silva, Elian Lima Pereira e Diogo de Mello Silva')
 
 
+# Desenha um retangulo arredondado preenchido.
 def rect(x, y, width, height, fill, radius=10):
     PDF.setFillColor(HexColor(fill))
     PDF.roundRect(x, y, width, height, radius, stroke=0, fill=1)
 
 
+# Escreve um texto.
 def text(x, y, value, size=16, color=INK, font='Helvetica'):
     PDF.setFillColor(HexColor(color))
     PDF.setFont(font, size)
     PDF.drawString(x, y, value)
 
 
+# Escreve varias linhas com espacamento fixo.
 def lines(x, y, values, size=17, color=INK, gap=28, font='Helvetica'):
     for index, value in enumerate(values):
         text(x, y - index * gap, value, size, color, font)
 
 
+# Desenha uma seta.
 def arrow(x1, y1, x2, y2, color=BLUE, width=2):
     PDF.setStrokeColor(HexColor(color))
     PDF.setFillColor(HexColor(color))
@@ -54,6 +58,7 @@ def arrow(x1, y1, x2, y2, color=BLUE, width=2):
     PDF.drawPath(path, stroke=0, fill=1)
 
 
+# Inicia um slide com titulo, subtitulo e rodape.
 def begin(number, title, subtitle):
     PDF.setFillColor(HexColor(PAPER))
     PDF.rect(0, 0, WIDTH, HEIGHT, stroke=0, fill=1)
@@ -64,12 +69,14 @@ def begin(number, title, subtitle):
     text(890, 22, f'{number} / 6', 10, MUTED)
 
 
+# Desenha um cartao com titulo e detalhes.
 def box(x, y, width, height, title, detail, color=WHITE):
     rect(x, y, width, height, color)
     text(x + 18, y + height - 30, title, 18, INK, 'Helvetica-Bold')
     lines(x + 18, y + height - 57, detail, size=13, gap=21, color=MUTED)
 
 
+# Desenha o mapa das rotas e do corredor.
 def map_routes(x, y, scale=26):
     rect(x, y, scale * 11, scale * 11, WHITE)
     cx, cy = x + 5.5 * scale, y + 5.5 * scale

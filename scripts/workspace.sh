@@ -13,15 +13,18 @@ JOBS="${JOBS:-2}"
 DEMO_TIMEOUT="${DEMO_TIMEOUT:-45s}"
 AUTOMATION_LOG_DIR="${WORKSPACE_ROOT}/log/automation"
 
+# Imprime erro e encerra.
 fail() {
   printf '[ERRO] %s\n' "$*" >&2
   exit 1
 }
 
+# Exige que um comando exista.
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "Comando '$1' ausente no Ubuntu/WSL. Consulte make env."
 }
 
+# Carrega o ambiente ROS.
 load_ros() {
   [[ "$(uname -s)" == Linux ]] || fail 'Execute esta tarefa no Ubuntu/WSL; o projeto usa IPC POSIX Linux.'
   [[ -f "${ROS_SETUP}" ]] || fail "ROS nao encontrado em ${ROS_SETUP}. Confira ROS_SETUP e ROS_DISTRO."
@@ -29,12 +32,14 @@ load_ros() {
   source "${ROS_SETUP}"
 }
 
+# Carrega o ROS e o overlay do workspace.
 load_overlay() {
   load_ros
   [[ -f install/setup.bash ]] || fail 'Overlay ausente. Execute make build primeiro.'
   source install/setup.bash
 }
 
+# Mostra a ajuda dos alvos Make.
 show_help() {
   cat <<'HELP'
 FleetPOSIX - automacoes do workspace (Ubuntu 24.04 / WSL 2, ROS 2 Jazzy)
@@ -77,6 +82,7 @@ Nao e preciso executar source antes de make; cada tarefa carrega seu ambiente.
 HELP
 }
 
+# Confere ferramentas, pacotes ROS e diretorios de IPC.
 check_environment() {
   printf '\n[AMBIENTE] Conferindo o workspace: %s\n' "${WORKSPACE_ROOT}"
   load_ros
@@ -129,6 +135,7 @@ check_environment() {
   printf '[OK] Pre-requisitos de build e testes encontrados; isso nao substitui make deps.\n'
 }
 
+# Compila o workspace com colcon.
 build_workspace() {
   printf '\n[BUILD] Compilando C++17 com -Werror e BUILD_TESTING=ON.\n'
   load_ros
@@ -141,6 +148,7 @@ build_workspace() {
     --parallel-workers "${JOBS}" --cmake-args -DBUILD_TESTING=ON
 }
 
+# Confere ou aplica o estilo C++.
 check_style() {
   load_ros
   require_command ament_uncrustify
@@ -156,6 +164,7 @@ check_style() {
   ament_uncrustify src/fleet_posix/src src/fleet_posix/include src/fleet_posix/test
 }
 
+# Exige os resultados XML dos testes.
 require_test_results() {
   local name
   for name in fleet_posix_shared_state fleet_posix_integration; do
@@ -164,6 +173,7 @@ require_test_results() {
   done
 }
 
+# Executa os testes e mostra os resultados.
 run_tests() {
   printf '\n[TESTES] Executando mutex robusto e 12 cenarios de integracao offscreen.\n'
   load_overlay
@@ -179,6 +189,7 @@ run_tests() {
   printf '[OK] Suite concluida. Logs detalhados: build/fleet_posix/test_logs/\n'
 }
 
+# Executa as demos segura e insegura sem janela.
 run_simulations() {
   load_overlay
   require_command timeout
@@ -198,6 +209,7 @@ run_simulations() {
   done
 }
 
+# Executa demo ou operacao online com janela.
 run_visual() {
   load_overlay
   [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]] || \
@@ -217,6 +229,7 @@ run_visual() {
   exec ros2 run fleet_posix fleet_supervisor "${options[@]}"
 }
 
+# Mostra o andamento e os artefatos locais.
 show_status() {
   printf 'FleetPOSIX - andamento do projeto (referencia documentada)\n\n'
   sed -n '/<!-- andamento:inicio -->/,/<!-- andamento:fim -->/{ /<!--/d; p; }' README.md
@@ -244,6 +257,7 @@ show_status() {
   fi
 }
 
+# Lista processos e objetos de IPC da frota.
 show_ipc() {
   printf '[INSPECAO] Processos da frota nesta maquina (podem pertencer a outras execucoes):\n'
   ps -C fleet_supervisor,amr_agent,turtlesim_node -o pid,ppid,args || true
@@ -252,6 +266,7 @@ show_ipc() {
   printf 'Nenhum objeto e removido por este alvo.\n'
 }
 
+# Remove build/, install/ e log/.
 clean_workspace() {
   local name target
   [[ -f src/fleet_posix/package.xml && -f Makefile ]] || fail 'Raiz do workspace nao reconhecida.'
