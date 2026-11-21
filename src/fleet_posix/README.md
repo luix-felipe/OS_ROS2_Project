@@ -12,7 +12,8 @@ e implementado explicitamente com processos, threads e IPC POSIX.
 - a frota publica estado em memoria compartilhada;
 - um semaforo compartilhado permite apenas um AMR no corredor central;
 - mutexes e variavel de condicao protegem pose e estado;
-- um pipe agrega logs de todos os agentes;
+- um pipe anonimo agrega logs de todos os agentes;
+- um named pipe (FIFO) aceita comandos de outro terminal na operacao online;
 - o supervisor encerra e recolhe os filhos com sinais e `waitpid()`.
 
 O Turtlesim e uma abstracao 2D. Nao ha pretensao de simular dinamica, sensores,
@@ -85,7 +86,24 @@ retomar 1
 sair
 ```
 
-Use coordenadas entre 0.5 e 10.5. `Ctrl+C` solicita encerramento geral.
+Use coordenadas entre 0.5 e 10.5, fora da regiao critica (circulo de raio 2.35
+em torno de (5.5, 5.5)); destinos dentro dela sao recusados, pois um AMR parado
+ali sem possuir o semaforo quebraria a exclusao mutua. `Ctrl+C` solicita
+encerramento geral.
+
+### Comandos por named pipe (FIFO)
+
+Na operacao online o supervisor cria `/tmp/fleet_posix_ctl_<pid>` com `mkfifo`
+e o multiplexa com o terminal via `poll()`. Em outro terminal:
+
+```bash
+echo "enviar 1 9.0 5.15" > /tmp/fleet_posix_ctl_<pid>
+echo "status"            > /tmp/fleet_posix_ctl_<pid>
+```
+
+O caminho exato e impresso na inicializacao. O supervisor mantem um escritor
+interno aberto, de modo que o fechamento de cada `echo` nao gera EOF continuo.
+O FIFO e removido com `unlink` no encerramento.
 
 O detector acompanha as poses continuamente, mesmo sem novos comandos no
 terminal. No modo online inseguro (`--unsafe`), ele tambem contabiliza colisoes.
@@ -102,8 +120,10 @@ com prazo limitado e usa sinais se um processo nao responder.
 
 A exclusao mutua protege a travessia da regiao central nas rotas de referencia.
 Destinos online arbitrarios exigem cuidado do operador: nao ha planejamento
-de rotas nem desvio de AMRs parados fora do corredor. Evite destinos dentro
-da regiao central ou coincidentes com posicoes de espera de outros AMRs.
+de rotas nem desvio de AMRs parados fora do corredor. Destinos dentro da regiao
+central sao recusados; evite tambem destinos coincidentes com posicoes de espera
+de outros AMRs. A espera pelo corredor usa tentativas com prazo
+(`sem_clockwait` em `CLOCK_MONOTONIC`), sem ordem FIFO garantida entre AMRs.
 
 ## Testes sem interface grafica
 
@@ -117,10 +137,11 @@ colcon test-result --verbose
 ```
 
 Sao duas entradas CTest: um teste C++ de recuperacao do mutex compartilhado
-apos morte do proprietario e uma suite Python com onze cenarios de integracao:
+apos morte do proprietario e uma suite Python com doze cenarios de integracao:
 
 - demonstracoes segura e insegura;
 - deteccao de colisoes online sem novas entradas no terminal;
+- comandos pelo FIFO e recusa de destino dentro da regiao critica;
 - shutdown com proprietario pausado e outros agentes aguardando o corredor;
 - retomada e shutdown com buffer cheio;
 - `SIGINT` no grupo de processos com entrada parcial no terminal;
@@ -153,7 +174,8 @@ base inicializada. A compilacao verifica as dependencias CMake do pacote.
 | Mutex | estado compartilhado, pose e buffer de comandos |
 | Condicao | thread de controle aguarda nova pose sem espera ocupada |
 | Semaforos | buffer produtor-consumidor e corredor compartilhado |
-| Pipe | eventos dos agentes para o supervisor |
+| Pipe | eventos dos agentes para o supervisor (`pipe`, escrita atomica < `PIPE_BUF`) |
+| Named pipe (FIFO) | comandos externos (`mkfifo`, `open`, `poll`, `unlink`) |
 | Filas POSIX | comandos online do operador para cada AMR |
 | Memoria compartilhada | pose, missao e estado de toda a frota |
 | Sinais | emergencia por `SIGINT` e encerramento do Turtlesim |

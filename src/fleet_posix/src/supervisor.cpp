@@ -52,7 +52,8 @@ class IpcResources
 {
 public:
   IpcResources()
-  : shm_name("/fleet_posix_state_" + std::to_string(getpid()))
+  : shm_name("/fleet_posix_state_" + std::to_string(getpid())),
+    fifo_name("/tmp/fleet_posix_ctl_" + std::to_string(getpid()))
   {
     for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
       queue_names[index] =
@@ -73,6 +74,14 @@ public:
       if (fd >= 0) {
         close(fd);
       }
+    }
+    for (const int fd : {fifo_fd, fifo_keepalive_fd_}) {
+      if (fd >= 0) {
+        close(fd);
+      }
+    }
+    if (fifo_created_) {
+      unlink(fifo_name.c_str());
     }
     if (state != nullptr) {
       if (corridor_initialized_) {
@@ -156,10 +165,38 @@ public:
     return true;
   }
 
+  // Named pipe (FIFO) de controle: permite enviar comandos de outro terminal,
+  // por exemplo: echo "enviar 1 9.0 5.15" > /tmp/fleet_posix_ctl_<pid>
+  bool create_control_fifo()
+  {
+    if (mkfifo(fifo_name.c_str(), 0600) == -1) {
+      std::perror("mkfifo");
+      return false;
+    }
+    fifo_created_ = true;
+    // O_NONBLOCK: abrir para leitura nao bloqueia sem escritores. O_CLOEXEC: os
+    // filhos (exec) nao herdam o canal do operador.
+    fifo_fd = open(fifo_name.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fifo_fd == -1) {
+      std::perror("open FIFO leitura");
+      return false;
+    }
+    // Escritor interno mantido aberto: quando um "echo" externo fecha o FIFO,
+    // o leitor nao recebe EOF/POLLHUP continuo e o poll nao entra em espera ocupada.
+    fifo_keepalive_fd_ = open(fifo_name.c_str(), O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fifo_keepalive_fd_ == -1) {
+      std::perror("open FIFO escritor interno");
+      return false;
+    }
+    return true;
+  }
+
   IpcResources(const IpcResources &) = delete;
   IpcResources & operator=(const IpcResources &) = delete;
 
   std::string shm_name;
+  std::string fifo_name;
+  int fifo_fd{-1};
   std::string queue_names[fleet_posix::kRobotCount];
   mqd_t queues[fleet_posix::kRobotCount];
   FleetState * state{nullptr};
@@ -169,6 +206,8 @@ private:
   bool shm_created_{false};
   bool mutex_initialized_{false};
   bool corridor_initialized_{false};
+  bool fifo_created_{false};
+  int fifo_keepalive_fd_{-1};
 };
 
 struct ChildProcess
@@ -236,6 +275,19 @@ bool finish_child(ChildProcess & child, bool terminate)
   return child.reaped && WIFEXITED(child.status) && WEXITSTATUS(child.status) == 0;
 }
 
+// No filho, antes do exec: o terminal pertence somente ao supervisor. Sem isso,
+// Turtlesim e agentes herdariam o stdin do operador.
+void detach_stdin()
+{
+  const int null_fd = open("/dev/null", O_RDONLY);
+  if (null_fd >= 0) {
+    dup2(null_fd, STDIN_FILENO);
+    if (null_fd != STDIN_FILENO) {
+      close(null_fd);
+    }
+  }
+}
+
 bool read_exact(int fd, void * destination, std::size_t size)
 {
   auto * cursor = static_cast<unsigned char *>(destination);
@@ -262,7 +314,8 @@ void * logger_thread(void * argument)
   const int fd = *static_cast<int *>(argument);
   LogEvent event{};
   while (read_exact(fd, &event, sizeof(event))) {
-    std::printf("[AMR %d | pid=%d] %.*s\n", event.robot_id, event.pid,
+    std::printf(
+      "[AMR %d | pid=%d] %.*s\n", event.robot_id, event.pid,
       static_cast<int>(sizeof(event.text)), event.text);
   }
   return nullptr;
@@ -286,27 +339,55 @@ bool send_command(mqd_t queue, const Command & command)
   return true;
 }
 
+struct StatusSnapshot
+{
+  fleet_posix::RobotState robots[fleet_posix::kRobotCount];
+  int corridor_owner;
+  std::uint32_t collision_count;
+  int safe_mode;
+};
+
 void print_status(FleetState * state)
 {
+  // Secao critica minima: copia o estado sob o mutex e imprime fora dele. Um
+  // stdout lento (pipe/tee cheio) nao bloqueia os callbacks de pose dos agentes.
+  StatusSnapshot snapshot{};
   lock_fleet_state(state);
-  std::printf("\n%-5s %-8s %-8s %-22s %-8s %-9s\n",
+  std::memcpy(snapshot.robots, state->robots, sizeof(snapshot.robots));
+  snapshot.corridor_owner = state->corridor_owner;
+  snapshot.collision_count = state->collision_count;
+  snapshot.safe_mode = state->safe_mode;
+  pthread_mutex_unlock(&state->mutex);
+
+  std::printf(
+    "\n%-5s %-8s %-8s %-22s %-8s %-9s\n",
     "AMR", "X", "Y", "ESTADO", "MISSAO", "CONCLUIDAS");
   for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
-    const auto & robot = state->robots[index];
+    const auto & robot = snapshot.robots[index];
     std::printf(
       "%-5d %-8.2f %-8.2f %-22s %-8u %-9u\n",
       index + 1, robot.x, robot.y, fleet_posix::mode_name(robot.mode),
       robot.current_mission, robot.completed_missions);
   }
+  const std::string owner =
+    snapshot.corridor_owner == 0 ? "livre" : std::to_string(snapshot.corridor_owner);
   std::printf(
     "corredor=%s | colisoes=%u | modo=%s\n\n",
-    state->corridor_owner == 0 ? "livre" : std::to_string(state->corridor_owner).c_str(),
-    state->collision_count, state->safe_mode ? "SEGURO" : "INSEGURO");
-  pthread_mutex_unlock(&state->mutex);
+    owner.c_str(), snapshot.collision_count, snapshot.safe_mode ? "SEGURO" : "INSEGURO");
 }
 
 void detect_collisions(FleetState * state, bool active_pairs[3][3])
 {
+  struct CollisionEvent
+  {
+    int first;
+    int second;
+    double x;
+    double y;
+  };
+  CollisionEvent events[fleet_posix::kRobotCount * fleet_posix::kRobotCount]{};
+  int event_count = 0;
+
   lock_fleet_state(state);
   for (int first = 0; first < fleet_posix::kRobotCount; ++first) {
     for (int second = first + 1; second < fleet_posix::kRobotCount; ++second) {
@@ -315,14 +396,20 @@ void detect_collisions(FleetState * state, bool active_pairs[3][3])
       const bool colliding = a.online && b.online && std::hypot(a.x - b.x, a.y - b.y) < 0.55;
       if (colliding && !active_pairs[first][second]) {
         ++state->collision_count;
-        std::printf(
-          "[DETECTOR] colisao logica entre AMR %d e AMR %d em (%.2f, %.2f)\n",
-          first + 1, second + 1, (a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+        events[event_count++] =
+          CollisionEvent{first + 1, second + 1, (a.x + b.x) / 2.0, (a.y + b.y) / 2.0};
       }
       active_pairs[first][second] = colliding;
     }
   }
   pthread_mutex_unlock(&state->mutex);
+
+  // I/O fora da secao critica compartilhada entre processos.
+  for (int index = 0; index < event_count; ++index) {
+    std::printf(
+      "[DETECTOR] colisao logica entre AMR %d e AMR %d em (%.2f, %.2f)\n",
+      events[index].first, events[index].second, events[index].x, events[index].y);
+  }
 }
 
 bool all_robots_online(FleetState * state)
@@ -435,6 +522,19 @@ bool handle_console_line(
       std::printf("Destino invalido. Use coordenadas entre 0.5 e 10.5.\n");
       return true;
     }
+    // Um AMR estacionado dentro da regiao critica nao possui o semaforo e
+    // quebraria a exclusao mutua: destinos ali sao recusados.
+    if (std::hypot(
+        command.target_x - fleet_posix::kCorridorCenterX,
+        command.target_y - fleet_posix::kCorridorCenterY) < fleet_posix::kCorridorAcquireRadius)
+    {
+      std::printf(
+        "Destino dentro da regiao critica do corredor (raio %.2f em torno de "
+        "(%.1f, %.1f)); escolha um ponto fora dela.\n",
+        fleet_posix::kCorridorAcquireRadius, fleet_posix::kCorridorCenterX,
+        fleet_posix::kCorridorCenterY);
+      return true;
+    }
     command.type = CommandType::kMission;
     command.mission_id = next_mission++;
   } else if (action == "pausar") {
@@ -449,62 +549,94 @@ bool handle_console_line(
   return true;
 }
 
+// Le o que estiver disponivel em fd e processa linhas completas. Retorna false
+// quando o operador pediu "sair"; eof indica fim do descritor.
+bool drain_lines(
+  int fd, std::string & pending, IpcResources & ipc, std::uint32_t & next_mission,
+  const char * origin, bool & eof)
+{
+  char buffer[512];
+  const ssize_t received = read(fd, buffer, sizeof(buffer));
+  if (received == -1 && (errno == EINTR || errno == EAGAIN)) {
+    return true;
+  }
+  if (received < 0) {
+    std::perror("read comandos do operador");
+    eof = true;
+    return true;
+  }
+  if (received == 0) {
+    eof = true;
+    if (!pending.empty()) {
+      const std::string line = pending;
+      pending.clear();
+      return handle_console_line(line, ipc, next_mission);
+    }
+    return true;
+  }
+  pending.append(buffer, static_cast<std::size_t>(received));
+  std::size_t newline;
+  while ((newline = pending.find('\n')) != std::string::npos) {
+    const std::string line = pending.substr(0, newline);
+    pending.erase(0, newline + 1);
+    if (origin != nullptr && !line.empty()) {
+      std::printf("[%s] %s\n", origin, line.c_str());
+    }
+    if (!handle_console_line(line, ipc, next_mission)) {
+      return false;
+    }
+    std::printf("fleet> ");
+    std::fflush(stdout);
+  }
+  if (pending.size() > 4096) {
+    std::fprintf(stderr, "Linha de comando muito longa; entrada descartada.\n");
+    pending.clear();
+  }
+  return true;
+}
+
 bool run_console(IpcResources & ipc, ChildProcess & turtlesim, ChildProcess agents[3])
 {
   std::printf(
     "Comandos: enviar <amr> <x> <y> | pausar <amr> | retomar <amr> | "
     "status | sair\n");
+  std::printf("Canal FIFO (outro terminal): echo \"status\" > %s\n", ipc.fifo_name.c_str());
   std::printf("fleet> ");
   std::fflush(stdout);
   std::uint32_t next_mission = 1;
-  std::string pending;
+  std::string stdin_pending;
+  std::string fifo_pending;
   bool collision_pairs[3][3]{};
   while (!g_stop_requested) {
     if (!children_running(turtlesim, agents)) {
       return false;
     }
     detect_collisions(ipc.state, collision_pairs);
-    pollfd console{STDIN_FILENO, POLLIN, 0};
-    const int ready = poll(&console, 1, 50);
+    // poll() multiplexa duas fontes de comandos: terminal (stdin) e FIFO.
+    pollfd sources[2] = {{STDIN_FILENO, POLLIN, 0}, {ipc.fifo_fd, POLLIN, 0}};
+    const int ready = poll(sources, 2, 50);
     if (ready == -1 && errno == EINTR) {
       continue;
     }
-    if (ready == -1 || (console.revents & (POLLERR | POLLNVAL))) {
+    if (ready == -1 || ((sources[0].revents | sources[1].revents) & (POLLERR | POLLNVAL))) {
       std::fprintf(stderr, "Erro ao aguardar entrada do operador.\n");
       return false;
     }
     if (ready == 0) {
       continue;
     }
-    char buffer[512];
-    const ssize_t received = read(STDIN_FILENO, buffer, sizeof(buffer));
-    if (received == -1 && errno == EINTR) {
-      continue;
-    }
-    if (received < 0) {
-      std::perror("read stdin");
-      return false;
-    }
-    if (received == 0) {
-      if (!pending.empty()) {
-        handle_console_line(pending, ipc, next_mission);
-      }
-      return true;
-    }
-    pending.append(buffer, static_cast<std::size_t>(received));
-    std::size_t newline;
-    while ((newline = pending.find('\n')) != std::string::npos) {
-      const std::string line = pending.substr(0, newline);
-      pending.erase(0, newline + 1);
-      if (!handle_console_line(line, ipc, next_mission)) {
+    if (sources[0].revents & (POLLIN | POLLHUP)) {
+      bool eof = false;
+      if (!drain_lines(STDIN_FILENO, stdin_pending, ipc, next_mission, nullptr, eof) || eof) {
+        // "sair" ou fim do terminal (Ctrl+D) encerram a frota.
         return true;
       }
-      std::printf("fleet> ");
-      std::fflush(stdout);
     }
-    if (pending.size() > 4096) {
-      std::fprintf(stderr, "Linha de comando muito longa; entrada descartada.\n");
-      pending.clear();
+    if (sources[1].revents & POLLIN) {
+      bool eof = false;
+      if (!drain_lines(ipc.fifo_fd, fifo_pending, ipc, next_mission, "FIFO", eof)) {
+        return true;
+      }
     }
   }
   return true;
@@ -522,18 +654,23 @@ int run_supervisor(bool demo_mode, bool unsafe_mode)
   if (!ipc.initialize(unsafe_mode)) {
     return EXIT_FAILURE;
   }
+  if (!demo_mode && !ipc.create_control_fifo()) {
+    return EXIT_FAILURE;
+  }
   std::string agent_ids[fleet_posix::kRobotCount];
   for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
     agent_ids[index] = std::to_string(index + 1);
   }
   const std::string log_fd = std::to_string(ipc.log_pipe[1]);
 
-  std::printf("FleetPOSIX supervisor pid=%d | modo=%s\n",
+  std::printf(
+    "FleetPOSIX supervisor pid=%d | modo=%s\n",
     getpid(), unsafe_mode ? "INSEGURO" : "SEGURO");
   ChildProcess turtlesim;
   ChildProcess agents[fleet_posix::kRobotCount];
   turtlesim.pid = fork();
   if (turtlesim.pid == 0) {
+    detach_stdin();
     close(ipc.log_pipe[0]);
     close(ipc.log_pipe[1]);
     execl(turtlesim_executable.c_str(), turtlesim_executable.c_str(), nullptr);
@@ -549,6 +686,7 @@ int run_supervisor(bool demo_mode, bool unsafe_mode)
   for (int index = 0; index < fleet_posix::kRobotCount; ++index) {
     agents[index].pid = fork();
     if (agents[index].pid == 0) {
+      detach_stdin();
       close(ipc.log_pipe[0]);
       execl(
         agent_executable.c_str(), agent_executable.c_str(), "--id", agent_ids[index].c_str(),
@@ -629,7 +767,8 @@ int main(int argc, char * argv[])
       return EXIT_FAILURE;
     }
   }
-  struct sigaction action{};
+  struct sigaction action;
+  std::memset(&action, 0, sizeof(action));
   action.sa_handler = signal_handler;
   sigemptyset(&action.sa_mask);
   sigaction(SIGINT, &action, nullptr);

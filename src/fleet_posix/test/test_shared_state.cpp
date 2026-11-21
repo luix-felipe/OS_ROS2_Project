@@ -8,8 +8,9 @@
 
 int main()
 {
-  void * mapping = mmap(nullptr, sizeof(fleet_posix::FleetState), PROT_READ | PROT_WRITE,
-      MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  void * mapping = mmap(
+    nullptr, sizeof(fleet_posix::FleetState), PROT_READ | PROT_WRITE,
+    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
   if (mapping == MAP_FAILED) {
     return EXIT_FAILURE;
   }

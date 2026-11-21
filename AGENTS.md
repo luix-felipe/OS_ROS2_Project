@@ -110,6 +110,7 @@ Preserve o uso explicito destes mecanismos:
 | Condicao | `pthread_cond_timedwait` para aguardar pose |
 | Semaforos | buffer produtor-consumidor e corredor compartilhado |
 | Pipe | `LogEvent` dos agentes para o supervisor |
+| Named pipe (FIFO) | `/tmp/fleet_posix_ctl_<pid>`: comandos externos multiplexados com stdin via `poll` |
 | Filas POSIX | uma fila de comandos por AMR |
 | Memoria compartilhada | `FleetState` via `shm_open` e `mmap` |
 | Sinais | `SIGINT`/`SIGTERM` e encerramento do Turtlesim |
@@ -338,6 +339,18 @@ Automacoes Make validadas em 2026-11-20:
   destinos simbolicos recusados; os artefatos reais nao foram removidos;
 - `rosdep` e `reportlab` ausentes no Ubuntu: avisos em `make env`;
   `make deps` e regeneracao de slides continuam dependendo dessas ferramentas.
+
+Revisao realizada em 2026-11-21 (ROS 2 Jazzy via RoboStack, GCC 13, uncrustify 0.83):
+
+- `demo.sh` respeita `ROS_SETUP`/`ROS_DISTRO` em vez de `/opt/ros/jazzy` fixo;
+- filhos recebem `/dev/null` como stdin; o terminal pertence ao supervisor;
+- `print_status` e `detect_collisions` copiam o estado sob o mutex e imprimem fora;
+- esperas temporizadas do agente usam `CLOCK_MONOTONIC` (`pthread_condattr_setclock`,
+  `sem_clockwait`);
+- destinos online dentro da regiao critica sao recusados;
+- novo canal de comandos por named pipe (FIFO) no modo online, com teste;
+- 12 cenarios Python + teste C++ aprovados, inclusive com ASan/UBSan (3 rodadas);
+- `make simulate`: 0 colisoes no seguro e 2 no inseguro.
 
 ## Regras para alteracoes
 

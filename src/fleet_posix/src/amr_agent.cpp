@@ -38,10 +38,12 @@ void signal_handler(int)
   g_stop_requested = 1;
 }
 
+// Prazos em CLOCK_MONOTONIC: ajustes do relogio de parede (NTP, sincronizacao
+// do WSL apos suspensao) nao encurtam nem prolongam as esperas temporizadas.
 timespec deadline_after(long nanoseconds)
 {
   timespec deadline{};
-  clock_gettime(CLOCK_REALTIME, &deadline);
+  clock_gettime(CLOCK_MONOTONIC, &deadline);
   deadline.tv_nsec += nanoseconds;
   if (deadline.tv_nsec >= 1000000000) {
     ++deadline.tv_sec;
@@ -77,6 +79,16 @@ public:
       sem_destroy(&command_buffer_.free_slots);
       throw std::runtime_error("sem_init used_slots");
     }
+    pthread_condattr_t condition_attributes;
+    if (pthread_condattr_init(&condition_attributes) != 0 ||
+      pthread_condattr_setclock(&condition_attributes, CLOCK_MONOTONIC) != 0 ||
+      pthread_cond_init(&pose_changed_, &condition_attributes) != 0)
+    {
+      sem_destroy(&command_buffer_.free_slots);
+      sem_destroy(&command_buffer_.used_slots);
+      throw std::runtime_error("pthread_cond_init CLOCK_MONOTONIC");
+    }
+    pthread_condattr_destroy(&condition_attributes);
 
     velocity_publisher_ = create_publisher<geometry_msgs::msg::Twist>(
       "/" + turtle_name_ + "/cmd_vel", 10);
@@ -431,7 +443,7 @@ private:
         bool acquired = false;
         while (is_running() && !paused_.load()) {
           const timespec deadline = deadline_after(100000000);
-          if (sem_timedwait(&fleet_->corridor, &deadline) == 0) {
+          if (sem_clockwait(&fleet_->corridor, CLOCK_MONOTONIC, &deadline) == 0) {
             acquired = true;
             break;
           }
@@ -482,8 +494,8 @@ private:
         return;
       }
 
-      const double desired_heading = std::atan2(command.target_y - pose.y,
-          command.target_x - pose.x);
+      const double desired_heading = std::atan2(
+        command.target_y - pose.y, command.target_x - pose.x);
       const double heading_error = normalize_angle(desired_heading - pose.theta);
       geometry_msgs::msg::Twist velocity;
       velocity.linear.x = std::abs(heading_error) < 0.55 ? 1.8 : 0.0;
@@ -574,7 +586,7 @@ private:
   std::atomic<bool> failed_{false};
   pthread_mutex_t pose_mutex_ = PTHREAD_MUTEX_INITIALIZER;
   pthread_mutex_t motion_mutex_ = PTHREAD_MUTEX_INITIALIZER;
-  pthread_cond_t pose_changed_ = PTHREAD_COND_INITIALIZER;
+  pthread_cond_t pose_changed_;  // inicializada no construtor com CLOCK_MONOTONIC
   PoseSnapshot pose_{};
   CommandBuffer command_buffer_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr velocity_publisher_;
@@ -645,7 +657,8 @@ int main(int argc, char * argv[])
     return EXIT_FAILURE;
   }
 
-  struct sigaction action{};
+  struct sigaction action;
+  std::memset(&action, 0, sizeof(action));
   action.sa_handler = signal_handler;
   sigemptyset(&action.sa_mask);
   sigaction(SIGINT, &action, nullptr);

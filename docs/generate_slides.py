@@ -116,8 +116,9 @@ for index, xpos in enumerate((60, 350, 640), 1):
     arrow(188, 295, xpos + 130, 252, TEAL)
 rect(640, 296, 260, 112, LIGHT)
 text(658, 377, 'IPC explícito', 18, INK, 'Helvetica-Bold')
-lines(658, 351, ['Filas de comandos por AMR', 'Memória e semáforo compartilhados', 'Pipe de eventos para o supervisor'],
-      size=12, gap=20)
+lines(658, 353, ['Filas de comandos por AMR', 'Memória e semáforo compartilhados',
+                 'Pipe de eventos para o supervisor', 'FIFO de comandos externos'],
+      size=12, gap=17)
 text(60, 77, 'Supervisor: 1 pthread de logs  |  Cada agente: 3 pthreads da aplicação + runtime ROS', 14, MUTED)
 PDF.showPage()
 
@@ -129,12 +130,13 @@ rows = [
     ('Condição', 'pthread_cond_timedwait aguarda nova pose'),
     ('Semáforos', 'Buffer produtor-consumidor + corredor (pshared=1)'),
     ('Pipe', 'LogEvent menor que PIPE_BUF: escrita atômica'),
+    ('Named pipe (FIFO)', 'mkfifo + poll: comandos de outro terminal'),
     ('Filas POSIX', 'mq_open, mq_send, mq_receive, mq_unlink'),
     ('Memória e sinais', 'shm_open/mmap; SIGINT e SIGTERM no shutdown'),
 ]
 for index, (concept, evidence) in enumerate(rows):
-    ypos = 388 - index * 39
-    rect(60, ypos - 10, 840, 35, WHITE if index % 2 == 0 else LIGHT, radius=4)
+    ypos = 392 - index * 35
+    rect(60, ypos - 10, 840, 31, WHITE if index % 2 == 0 else LIGHT, radius=4)
     text(76, ypos, concept, 15, INK, 'Helvetica-Bold')
     text(271, ypos, evidence, 14, INK)
 text(60, 54, 'O executor ROS cuida da simulação; sincronização e IPC permanecem explícitos.', 14, MUTED)
@@ -157,9 +159,9 @@ box(60, 229, 250, 170, 'Modo seguro', ['3 missões concluídas', '0 colisões l�
 box(355, 229, 250, 170, 'Modo inseguro', ['3 missões concluídas', '2 colisões lógicas', 'Sem exclusão do corredor'])
 box(650, 229, 250, 170, 'Modo online', ['Detector ativo sem nova entrada', 'Pausa/retomada com buffer cheio', 'Shutdown cancela missões'])
 rect(60, 89, 840, 104, NAVY)
-text(81, 158, '12 cenários automatizados, organizados em duas entradas CTest', 20, WHITE,
+text(81, 158, '13 cenários automatizados, organizados em duas entradas CTest', 20, WHITE,
      'Helvetica-Bold')
-lines(81, 127, ['Sinais, corredor ocupado, falhas parciais de IPC, morte de processo e mutex robusto.',
+lines(81, 127, ['Sinais, FIFO, corredor ocupado, falhas de IPC, morte de processo e mutex robusto.',
                 'Cada execução verifica ausência de processos e objetos IPC residuais.'],
       size=14, gap=23, color=WHITE)
 text(60, 55, 'MVP e automações validados. Pendências: checagem rosdep, licença e dados da equipe.', 13, MUTED)
@@ -172,7 +174,7 @@ workflow = [
     ('make help', 'Consultar alvos, opções e sequência sugerida.'),
     ('make status', 'Ler o andamento, as evidências e as pendências.'),
     ('make env', 'Conferir ferramentas, pacotes ROS e acesso aos IPCs.'),
-    ('make verify', 'Compilar, conferir estilo e rodar os 12 cenários sem janela.'),
+    ('make verify', 'Compilar, conferir estilo e rodar os 13 cenários sem janela.'),
     ('make simulate', 'Comparar seguro/inseguro offscreen e salvar logs.'),
     ('make demo', 'Exibir a demonstração segura no WSLg.'),
     ('make run', 'Enviar missões online e controlar pausa/retomada.'),
@@ -186,7 +188,7 @@ box(60, 64, 405, 89, 'Logs e inspeção',
      'Uma falha interrompe a sequência de validação.'])
 box(495, 64, 405, 89, 'Operação online',
     ['enviar, pausar, retomar, status e sair',
-     'Ctrl+C solicita encerramento de toda a frota.'])
+     'Também por FIFO: echo "status" > /tmp/fleet_posix_ctl_<pid>'])
 text(60, 44, 'Controle e IPC permanecem POSIX; Turtlesim é uma abstração visual 2D.', 12, MUTED)
 PDF.showPage()
 

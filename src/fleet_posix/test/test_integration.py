@@ -60,8 +60,25 @@ class Fleet:
         LIBC.shm_unlink(f'/fleet_posix_state_{self.pid}'.encode())
         for robot in range(1, 4):
             LIBC.mq_unlink(f'/fleet_posix_cmd_{self.pid}_{robot}'.encode())
+        try:
+            self.fifo_path().unlink()
+        except FileNotFoundError:
+            pass
         if exc_type is not None:
             print(f'\nLog da falha: {self.path}\n{self.text()}', flush=True)
+
+    def fifo_path(self):
+        return Path(f'/tmp/fleet_posix_ctl_{self.pid}')
+
+    def send_fifo(self, commands):
+        """Escreve como um terminal externo: abre, escreve linhas completas e fecha."""
+        deadline = time.monotonic() + 5
+        while not self.fifo_path().exists():
+            if time.monotonic() > deadline:
+                raise AssertionError(f'FIFO nao criado:\n{self.text()}')
+            time.sleep(0.02)
+        with self.fifo_path().open('w') as fifo:
+            fifo.write(commands)
 
     def text(self):
         return self.path.read_text()
@@ -94,6 +111,7 @@ class Fleet:
             assert result != 0, contents
         objects = [Path('/dev/shm') / f'fleet_posix_state_{self.pid}']
         objects += [Path('/dev/mqueue') / f'fleet_posix_cmd_{self.pid}_{i}' for i in range(1, 4)]
+        objects.append(self.fifo_path())
         assert not any(path.exists() for path in objects), f'IPC residual: {objects}'
         try:
             os.killpg(self.pid, 0)
@@ -140,6 +158,23 @@ class IntegrationTests(unittest.TestCase):
             fleet.send('sair\n')
             log = fleet.finish()
             self.assertIn('liberou o corredor', log)
+            self.assertEqual(log.count('threads finalizadas com pthread_join'), 3)
+
+    def test_fifo_control_channel_and_corridor_destination(self):
+        with Fleet('fifo_control') as fleet:
+            fleet.online()
+            self.assertIn(str(fleet.fifo_path()), fleet.text())
+            # Destino dentro da regiao critica e recusado (nao chega a fila POSIX).
+            fleet.send_fifo('enviar 1 5.5 5.5\n')
+            fleet.wait_log('Destino dentro da regiao critica')
+            # Varios escritores sucessivos: cada echo fecha o FIFO sem gerar EOF.
+            for command in TARGETS.splitlines():
+                fleet.send_fifo(command + '\n')
+            fleet.wait_log('missao concluida', count=3, timeout=30)
+            self.assertNotIn('[DETECTOR]', fleet.text())
+            fleet.send_fifo('status\nsair\n')
+            log = fleet.finish()
+            self.assertEqual(log.count('[FIFO] enviar'), 4)
             self.assertEqual(log.count('threads finalizadas com pthread_join'), 3)
 
     def test_full_buffer_keeps_resume_and_shutdown_responsive(self):

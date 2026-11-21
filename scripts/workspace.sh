@@ -165,7 +165,7 @@ require_test_results() {
 }
 
 run_tests() {
-  printf '\n[TESTES] Executando mutex robusto e 11 cenarios de integracao offscreen.\n'
+  printf '\n[TESTES] Executando mutex robusto e 12 cenarios de integracao offscreen.\n'
   load_overlay
   require_command colcon
   mkdir -p "${AUTOMATION_LOG_DIR}"
@@ -248,7 +248,7 @@ show_ipc() {
   printf '[INSPECAO] Processos da frota nesta maquina (podem pertencer a outras execucoes):\n'
   ps -C fleet_supervisor,amr_agent,turtlesim_node -o pid,ppid,args || true
   printf '\n[INSPECAO] Objetos nomeados; cada nome inclui o PID do supervisor:\n'
-  find /dev/shm /dev/mqueue -maxdepth 1 -name 'fleet_posix_*' -print
+  find /dev/shm /dev/mqueue /tmp -maxdepth 1 -name 'fleet_posix_*' -print
   printf 'Nenhum objeto e removido por este alvo.\n'
 }
 

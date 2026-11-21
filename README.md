@@ -1,43 +1,130 @@
-# FleetPOSIX Workspace
+# FleetPOSIX
 
-Workspace ROS 2 Jazzy do projeto academico FleetPOSIX: uma central POSIX
-controla tres AMRs independentes, representados por tartarugas, em uma regiao
-critica compartilhada.
+Projeto da disciplina de Sistemas Operacionais: uma central POSIX coordena
+tres robos moveis autonomos (AMRs) independentes que disputam uma regiao
+critica compartilhada (o corredor central de um almoxarifado). Os robos sao
+visualizados como tartarugas no Turtlesim (ROS 2 Jazzy).
 
-O ROS 2/Turtlesim e usado para pose, movimento e visualizacao. A orquestracao
-usa explicitamente `fork`, `exec`, `waitpid`, pthreads, mutexes, variavel de
-condicao, semaforos, pipe, filas POSIX, memoria compartilhada e sinais.
+## Objetivo
 
-## Comecar pelo Makefile
+Demonstrar, em uma aplicacao executavel e reprodutivel, programacao
+concorrente, sincronizacao e comunicacao entre processos com as APIs POSIX
+explicitas. O ROS 2 fica restrito a pose, movimento e visualizacao; todo o
+plano de controle (criacao de processos, threads, exclusao mutua e IPC) e
+POSIX. Um modo `--unsafe` desliga a exclusao mutua do corredor e expoe a
+condicao de corrida como colisoes logicas, permitindo comparar problema e
+solucao.
 
-Abra a raiz deste repositorio em um terminal Ubuntu/WSL. Nao e preciso executar
-`source` antes dos alvos Make: cada tarefa carrega o ROS e, quando necessario,
-o overlay do workspace. O Make apenas orquestra `colcon`, CMake e as ferramentas
-ROS; a arquitetura POSIX do programa continua a mesma.
+## Equipe
 
-```bash
-make                 # Ajuda completa; tambem pode usar make help.
-make status          # Andamento documentado e artefatos desta copia.
-make env             # Diagnostico de ferramentas e pacotes ROS instalados.
-make verify          # Ambiente -> build -> estilo -> testes, sem abrir janela.
-make simulate        # Comparacao segura/insegura offscreen com logs e resumo.
+| Integrante | Responsabilidade |
+| --- | --- |
+| _(preencher)_ | _(preencher)_ |
+| _(preencher)_ | _(preencher)_ |
+| _(preencher)_ | _(preencher)_ |
+
+## Arquitetura
+
+```text
+                         operador (terminal)     outro terminal
+                               | stdin                | echo > FIFO
+                               v                      v
+                   +------------------------------------------+
+                   | fleet_supervisor (processo pai)          |
+                   |  poll(stdin, FIFO) -> comandos           |
+                   |  detector de colisoes | thread de logs   |
+                   +------------------------------------------+
+           fork+exec |     mq_send (1 fila POSIX por AMR)  ^ pipe (LogEvent)
+        +------------+-------------+--------------+        |
+        v            v             v              v        |
+  turtlesim_node  amr_agent 1   amr_agent 2   amr_agent 3 -+
+                  3 pthreads cada: spin ROS | comandos (produtor) | controle (consumidor)
+
+  Memoria compartilhada /fleet_posix_state_<pid> (shm_open + mmap):
+    pthread_mutex robusto e PROCESS_SHARED + estado da frota
+    sem_t corridor (pshared=1, valor 1) = exclusao mutua no corredor
 ```
 
-Depois da validacao, escolha uma execucao visual:
+## Mecanismos de concorrencia, sincronizacao e IPC
+
+| Conceito da disciplina | Onde e como e usado |
+| --- | --- |
+| Processos | `supervisor.cpp`: `fork` + `execl` do Turtlesim e de 3 agentes; `waitpid` (com `WNOHANG` e prazo), `_exit` no filho |
+| Threads POSIX | `amr_agent.cpp`: `pthread_create`/`pthread_join` (spin ROS, comandos, controle); thread de logs no supervisor |
+| Mutex | mutex `PTHREAD_PROCESS_SHARED` + `PTHREAD_MUTEX_ROBUST` em `FleetState`; mutexes locais de pose, movimento e buffer |
+| Variavel de condicao | `pthread_cond_timedwait` (relogio monotonico): controle aguarda nova pose sem espera ocupada |
+| Semaforos POSIX | `sem_init(pshared=1)` para o corredor (`sem_clockwait`/`sem_post`); par `free_slots`/`used_slots` no buffer |
+| Produtor-consumidor | buffer circular limitado (4 missoes) entre a thread de comandos e a thread de controle |
+| Secao critica / corrida | travessia do corredor protegida no modo seguro; `--unsafe` demonstra a condicao de corrida |
+| Pipe | `pipe`: agentes enviam `LogEvent` (< `PIPE_BUF`, escrita atomica) ao supervisor |
+| Named pipe (FIFO) | `mkfifo /tmp/fleet_posix_ctl_<pid>`: comandos de outro terminal, multiplexados com stdin via `poll` |
+| Filas de mensagens POSIX | `mq_open`/`mq_send`/`mq_receive`: uma fila por AMR, comandos de controle com prioridade maior |
+| Memoria compartilhada | `shm_open` + `ftruncate` + `mmap`: pose, missao e estado de toda a frota |
+| Sinais | `sigaction` para `SIGINT`/`SIGTERM`; `kill(SIGTERM/SIGKILL)` no shutdown escalonado |
+
+Detalhes de funcionamento e limites do modelo:
+[`src/fleet_posix/README.md`](src/fleet_posix/README.md).
+
+## Pre-requisitos
+
+Ubuntu 24.04 (nativo ou WSL 2) com ROS 2 Jazzy. Em uma maquina sem ROS:
 
 ```bash
-make demo            # Demo segura no WSLg: tres missoes, zero colisoes.
-make demo-unsafe     # Demo insegura: pelo menos uma colisao logica esperada.
-make run             # Operacao online segura, por comandos no terminal.
-make run-unsafe      # Operacao online sem exclusao mutua do corredor.
+# Repositorio ROS 2: https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html
+sudo apt install ros-jazzy-ros-base ros-jazzy-turtlesim ros-jazzy-ament-cmake \
+  ros-jazzy-ament-uncrustify python3-colcon-common-extensions build-essential
 ```
 
-No PowerShell, pode chamar os mesmos alvos com `wsl -d Ubuntu -- make help`
-ou `wsl -d Ubuntu -- make verify`, estando na pasta deste repositorio. As tarefas
-de build e simulacao devem executar no Linux: o compilador nativo do Windows
-nao fornece os IPCs POSIX usados pelo projeto.
+O codigo usa IPC POSIX do Linux: nao compila no Windows nativo. Para a
+demonstracao visual no WSL e necessario WSLg (`DISPLAY` ou `WAYLAND_DISPLAY`).
 
-## O que cada automacao faz
+## Como executar
+
+Na raiz do repositorio (nao e preciso `source` antes do `make`):
+
+```bash
+make verify          # ambiente -> build -> estilo -> testes, sem abrir janela
+make demo            # demo visual segura: tres missoes, zero colisoes
+make demo-unsafe     # demo visual insegura: colisoes logicas esperadas
+make run             # operacao online (comandos abaixo)
+make simulate        # comparacao segura/insegura sem janela, com resumo
+```
+
+Comandos da operacao online, no terminal ou pelo FIFO impresso na inicializacao:
+
+```text
+enviar <amr> <x> <y>   pausar <amr>   retomar <amr>   status   sair
+```
+
+```bash
+# Exemplo em outro terminal (substitua <pid> pelo PID mostrado pelo supervisor)
+echo "enviar 1 9.0 5.15" > /tmp/fleet_posix_ctl_<pid>
+```
+
+Equivalente manual, sem Make:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+ros2 run fleet_posix fleet_supervisor --demo            # ou --demo --unsafe, ou sem opcoes
+```
+
+## Testes
+
+`make test` executa duas entradas CTest, sem interface grafica: um teste C++ de
+recuperacao do mutex robusto apos morte do processo dono e 12 cenarios de
+integracao em Python (demos segura/insegura, FIFO, sinais, buffer cheio,
+corredor ocupado com dono pausado, falhas parciais de IPC, morte de agente).
+Cada cenario confere que nao restam processos nem objetos IPC
+(`/dev/shm`, `/dev/mqueue`, FIFO em `/tmp`).
+
+## Automacao Make
+
+No PowerShell, os mesmos alvos funcionam com `wsl -d Ubuntu -- make verify`.
+`make help` lista todos os alvos; `make status` mostra o andamento.
+
+### Referencia dos alvos Make
 
 | Alvo | Comportamento e resultado |
 | --- | --- |
@@ -70,7 +157,7 @@ inesperado reprova `simulate`. `make report` consulta resultados anteriores;
 apenas `make test`/`make verify` atualizam a evidencia de testes. Nenhum alvo
 instala pacotes, executa `sudo`, altera licenca ou publica no Git.
 
-### Configuracao
+#### Configuracao
 
 | Variavel | Padrao | Uso |
 | --- | --- | --- |
@@ -92,36 +179,33 @@ nao disputem a mesma copia. O script auxiliar descobre a raiz por sua propria
 localizacao e preserva caminhos com espacos, como o caminho deste repositorio
 no Windows/WSL. Os arquivos de texto usam LF.
 
-### Logs e diagnostico
+#### Logs e diagnostico
 
 - `log/automation/test.log`: saida da ultima suite executada por Make.
 - `log/automation/demo-safe.log` e `demo-unsafe.log`: ultima comparacao offscreen.
 - `build/fleet_posix/test_logs/`: logs individuais dos cenarios de integracao.
 - `make ipc`: inspecao de processos e memoria/filas POSIX apos a execucao.
 
-O ambiente atual permite compilar e testar, mas ainda nao possui `rosdep`
-instalado. Por isso `make env` avisa e `make deps` falha explicitamente. A
-verificacao rosdep e separada de `make verify` e continua pendente ate a
-ferramenta e sua base estarem disponiveis. `reportlab` tambem e opcional e
-necessario apenas para regenerar os slides; o PDF pronto esta no repositorio.
+`rosdep` e `reportlab` sao opcionais: o primeiro so e usado por `make deps`;
+o segundo apenas para regenerar os slides (o PDF pronto esta no repositorio).
 
 ## Andamento do projeto
 
 <!-- andamento:inicio -->
-Referencia validada em 2026-11-20. O quadro descreve o projeto; a existencia de
+Referencia validada em 2026-11-21. O quadro descreve o projeto; a existencia de
 artefatos locais nao comprova que o codigo atual passou nas verificacoes.
 
 | Etapa | Situacao | Evidencia ou proximo passo |
 | --- | --- | --- |
 | MVP e APIs POSIX | Implementado | Tres AMRs, processos, pthreads, sincronizacao e IPC explicitos. |
 | Build e estilo C++ | Validados | GCC 13, C++17, -Werror e ament_uncrustify. |
-| Testes sem janela | Validados | 11 cenarios Python + teste C++ de mutex robusto; use make test. |
+| Testes sem janela | Validados | 12 cenarios Python + teste C++ de mutex robusto; use make test. |
 | Comparacao segura/insegura | Validada | 3 missoes por modo; 0 colisoes no seguro, 2 no inseguro na referencia. |
 | WSLg e operacao online | Validados | Demo visual e shutdown com pausa/corredor ocupado exercitados. |
 | Automacao Make | Validada | make -j4 verify e make simulate aprovados; propagacao de falhas e limpeza conferidas. |
 | Apresentacao | Pronta | Seis paginas em docs/FleetPOSIX_apresentacao.pdf. |
 | Dependencias via rosdep | Pendente no ambiente | Instalar/inicializar rosdep e executar make deps. |
-| Dados da equipe e licenca | Pendente de definicao | Preencher package.xml e documentar a divisao de trabalho. |
+| Dados da equipe e licenca | Pendente de definicao | Preencher a secao Equipe e o package.xml (mantenedor, licenca). |
 <!-- andamento:fim -->
 
 Para acompanhar outra copia ou apos alterar os fontes, execute `make status`
