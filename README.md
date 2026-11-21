@@ -17,11 +17,25 @@ solucao.
 
 ## Equipe
 
-| Integrante | Responsabilidade |
+- **Luiz Felipe Souza da Silva** (mantenedor do pacote e do repositorio)
+- **Elian Lima Pereira**
+- **Diogo de Mello Silva**
+
+### Atribuicoes gerais do projeto
+
+| Atribuicao | Responsaveis |
 | --- | --- |
-| Luiz Felipe Souza da Silva | Concepcao e desenvolvimento do projeto (junto com Elian), base do codigo e repositorio GitHub; mantenedor do pacote |
-| Elian Lima Pereira | Concepcao e desenvolvimento do projeto (junto com Luiz) |
-| Diogo de Mello Silva | Revisao tecnica e correcoes |
+| Concepcao do projeto e definicao do cenario (AMRs e corredor critico) | Luiz Felipe, Elian |
+| Arquitetura de processos, threads e IPC | Luiz Felipe, Elian |
+| Supervisor (`fork`/`exec`, `waitpid`, filas POSIX, memoria compartilhada, logs) | Luiz Felipe, Elian |
+| Agentes AMR (pthreads, mutex, variavel de condicao, semaforos, produtor-consumidor) | Luiz Felipe, Elian |
+| Integracao com ROS 2 / Turtlesim | Luiz Felipe, Elian |
+| Testes automatizados e automacao Make | Luiz Felipe, Elian |
+| Repositorio GitHub e manutencao do pacote | Luiz Felipe |
+| Apresentacao (slides) | Luiz Felipe, Elian, Diogo |
+| Revisao tecnica do codigo e da sincronizacao | Diogo |
+| Correcoes (secao critica, relogio monotonico, stdin dos filhos, `demo.sh`) e canal FIFO | Diogo |
+| Revisao da documentacao (README) | Diogo |
 
 Projeto academico, sem licenca de codigo aberto.
 
