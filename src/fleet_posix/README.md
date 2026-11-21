@@ -187,5 +187,5 @@ base inicializada. A compilacao verifica as dependencias CMake do pacote.
 - desvio de obstaculos e planejamento de rotas;
 - persistencia, rede e interface grafica propria.
 
-Antes da entrega, substitua o mantenedor e a licenca no `package.xml` pelos
-dados definidos pela equipe.
+Mantenedor do pacote: Luiz Felipe (luix.felipe008@gmail.com). Antes da entrega,
+substitua o `TODO` da licenca no `package.xml` pela licenca escolhida pela equipe.

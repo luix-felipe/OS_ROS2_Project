@@ -369,7 +369,6 @@ Revisao realizada em 2026-11-21 (ROS 2 Jazzy via RoboStack, GCC 13, uncrustify 0
 ## Pendencias conhecidas
 
 - escolher a licenca e substituir o `TODO` no `package.xml`;
-- substituir mantenedor e email pelos dados da equipe;
 - instalar/inicializar `rosdep` e repetir sua verificacao separada de dependencias;
 - documentar a divisao de trabalho dos integrantes.
 

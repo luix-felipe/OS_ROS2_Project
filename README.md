@@ -205,7 +205,7 @@ artefatos locais nao comprova que o codigo atual passou nas verificacoes.
 | Automacao Make | Validada | make -j4 verify e make simulate aprovados; propagacao de falhas e limpeza conferidas. |
 | Apresentacao | Pronta | Seis paginas em docs/FleetPOSIX_apresentacao.pdf. |
 | Dependencias via rosdep | Pendente no ambiente | Instalar/inicializar rosdep e executar make deps. |
-| Dados da equipe e licenca | Pendente de definicao | Preencher a secao Equipe e o package.xml (mantenedor, licenca). |
+| Dados da equipe e licenca | Parcial | Mantenedor definido (Luiz Felipe). Falta preencher a secao Equipe e escolher a licenca no package.xml. |
 <!-- andamento:fim -->
 
 Para acompanhar outra copia ou apos alterar os fontes, execute `make status`
@@ -219,7 +219,7 @@ para a disciplina estao em [`src/fleet_posix/README.md`](src/fleet_posix/README.
 
 - Apresentacao de seis paginas: [`docs/FleetPOSIX_apresentacao.pdf`](docs/FleetPOSIX_apresentacao.pdf).
 - Gerador editavel dos slides: [`docs/generate_slides.py`](docs/generate_slides.py).
-- Mantenedor, email e licenca ainda precisam ser definidos pela equipe em `package.xml`.
+- Mantenedor no `package.xml`: Luiz Felipe (luix.felipe008@gmail.com). A licenca ainda precisa ser escolhida pela equipe.
 - A equipe deve registrar os integrantes e sua divisao de trabalho antes da entrega.
 
 Os slides incluem os resultados de `make verify`, o andamento e as pendencias,
