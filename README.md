@@ -15,6 +15,24 @@ POSIX. Um modo `--unsafe` desliga a exclusao mutua do corredor e expoe a
 condicao de corrida como colisoes logicas, permitindo comparar problema e
 solucao.
 
+## Demonstracao animada
+
+| Modo seguro | Modo inseguro |
+| --- | --- |
+| ![Tres AMRs atravessando o corredor com exclusao mutua](docs/media/fleet-safe.gif) | ![Tres AMRs convergindo sem exclusao mutua](docs/media/fleet-unsafe.gif) |
+| Travessias serializadas; 3 missoes e 0 colisoes. | Convergencia simultanea; 3 missoes e 2 colisoes logicas. |
+
+Materiais para apresentacao:
+
+- [PowerPoint animado](docs/FleetPOSIX_apresentacao_animada.pptx) — seis slides;
+- [PDF estatico](docs/FleetPOSIX_apresentacao.pdf) — alternativa de seguranca;
+- [roteiro de 5–8 minutos](docs/FleetPOSIX_roteiro.md);
+- [video seguro em MP4](docs/media/fleet-safe.mp4);
+- [video inseguro em MP4](docs/media/fleet-unsafe.mp4).
+
+Os GIFs ficam incorporados ao PowerPoint e animam durante o modo apresentacao.
+Caso o aplicativo usado nao reproduza GIF, abra os MP4 ou use o PDF estatico.
+
 ## Equipe
 
 - **Luiz Felipe Souza da Silva** (mantenedor do pacote e do repositorio)
