@@ -8,3 +8,6 @@ log/
 *.swp
 *~
 .DS_Store
+
+# Contexto local para agentes de codigo
+AGENTS.md
