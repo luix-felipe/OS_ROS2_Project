@@ -19,6 +19,7 @@ BLUE = '#2563D8'
 AMBER = '#A95608'
 LIGHT = '#E1EAF4'
 DESTINATION = Path(__file__).with_name('FleetPOSIX_apresentacao.pdf')
+EVIDENCE = Path(__file__).parent / 'evidence' / '2026-11-23'
 PDF = canvas.Canvas(str(DESTINATION), pagesize=(WIDTH, HEIGHT))
 PDF.setTitle('FleetPOSIX - Concorrencia e IPC POSIX')
 PDF.setAuthor('Luiz Felipe Souza da Silva, Elian Lima Pereira e Diogo de Mello Silva')
@@ -65,7 +66,7 @@ def begin(number, title, subtitle):
     rect(40, 477, 6, 28, TEAL, radius=2)
     text(60, 482, title, 29, INK, 'Helvetica-Bold')
     text(60, 449, subtitle, 14, MUTED)
-    text(40, 22, 'FleetPOSIX  |  Sistemas Operacionais Embarcados  |  20/11/2026', 10, MUTED)
+    text(40, 22, 'FleetPOSIX  |  Sistemas Operacionais Embarcados  |  23/11/2026', 10, MUTED)
     text(890, 22, f'{number} / 6', 10, MUTED)
 
 
@@ -162,17 +163,24 @@ lines(435, 89, ['Centro (5.5, 5.5); raios de aquisição 2.35 e núcleo 1.35.',
                 'A pausa mantém a reserva; o shutdown a libera.'], size=12, gap=19, color=MUTED)
 PDF.showPage()
 
-begin(5, 'Resultados e regressões', 'make verify: build, estilo C++ e testes offscreen no WSL, com GCC 13 e -Werror')
-box(60, 229, 250, 170, 'Modo seguro', ['3 missões concluídas', '0 colisões lógicas', 'Travessias serializadas'])
-box(355, 229, 250, 170, 'Modo inseguro', ['3 missões concluídas', '2 colisões lógicas', 'Sem exclusão do corredor'])
-box(650, 229, 250, 170, 'Modo online', ['Detector ativo sem nova entrada', 'Pausa/retomada com buffer cheio', 'Shutdown cancela missões'])
-rect(60, 89, 840, 104, NAVY)
-text(81, 158, '13 cenários automatizados, organizados em duas entradas CTest', 20, WHITE,
+begin(5, 'Resultado real: seguro × inseguro',
+      'Capturas do Turtlesim em 23/11/2026; mesmas rotas, com e sem exclusão mútua')
+rect(50, 92, 410, 330, WHITE)
+rect(500, 92, 410, 330, WHITE)
+text(67, 394, 'SEGURO', 19, TEAL, 'Helvetica-Bold')
+text(517, 394, 'INSEGURO', 19, AMBER, 'Helvetica-Bold')
+PDF.drawImage(str(EVIDENCE / 'safe-corredor-2.png'), 117, 120, 276, 276,
+              preserveAspectRatio=True, mask='auto')
+PDF.drawImage(str(EVIDENCE / 'unsafe-convergencia.png'), 567, 120, 276, 276,
+              preserveAspectRatio=True, mask='auto')
+rect(67, 103, 376, 37, TEAL, radius=5)
+rect(517, 103, 376, 37, AMBER, radius=5)
+text(84, 115, '3 missões  •  travessias em série  •  0 colisões', 13, WHITE,
      'Helvetica-Bold')
-lines(81, 127, ['Sinais, FIFO, corredor ocupado, falhas de IPC, morte de processo e mutex robusto.',
-                'Cada execução verifica ausência de processos e objetos IPC residuais.'],
-      size=14, gap=23, color=WHITE)
-text(60, 55, 'MVP, automações e documentação validados. Pendência opcional: checagem via rosdep.', 13, MUTED)
+text(534, 115, '3 missões  •  convergência simultânea  •  2 colisões', 13, WHITE,
+     'Helvetica-Bold')
+text(50, 57, 'make verify: build com -Werror, estilo e 13 cenários aprovados; sem processos ou IPCs residuais.',
+     13, MUTED)
 PDF.showPage()
 
 begin(6, 'Automação e demonstração com Make',
