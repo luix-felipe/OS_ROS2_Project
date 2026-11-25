@@ -57,8 +57,10 @@ uma colisao; duas foi o resultado observado nesta validacao.
 - `rosdep check` nao foi executado: rosdep nao esta instalado nesta maquina.
   O build encontrou os pacotes CMake exigidos. `make deps` permite repetir
   essa verificacao em um ambiente com rosdep e sua base disponiveis.
-- `reportlab` nao esta instalado no Python do WSL; e opcional para regenerar
-  o PDF, nao para executar o projeto ou usar o arquivo de apresentacao pronto.
+- O diagnostico registrado inclui o antigo gerador local de PDF e seu aviso
+  sobre `reportlab`. A apresentacao oficial passou a ser mantida no Canva,
+  conforme [`../../README.md`](../../README.md); essa dependencia nao faz
+  parte da execucao atual do projeto.
 - Esta validacao e sem janela. Para evidencias visuais, consulte
   [`../2026-11-23/README.md`](../2026-11-23/README.md); para executar com janela,
   use `make demo` e `make demo-unsafe` em uma sessao WSLg.

@@ -19,6 +19,7 @@ DEMO_TIMEOUT ?= 45s
 export ROS_DISTRO ROS_SETUP ROS_DOMAIN_ID PYTHON JOBS DEMO_TIMEOUT
 
 # O script concentra diagnosticos, tratamento de erros e caminhos com espacos.
+# slides consulta a apresentacao oficial no Canva; a exportacao e feita por la.
 # Cada tarefa carrega o ROS/overlay necessario; nao e preciso executar source.
 help status env deps lint format report ipc slides clean:
 	@bash scripts/workspace.sh $@

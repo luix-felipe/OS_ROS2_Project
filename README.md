@@ -24,7 +24,7 @@ solucao.
 | Validacao automatizada | `make verify`: build, estilo, teste C++ e 12 cenarios Python |
 | Comparacao sem janela | `make simulate`: seguro com 0 colisoes; inseguro com pelo menos 1 |
 | Demonstracao visual | `make demo` e `make demo-unsafe` no WSLg |
-| Apresentacao e roteiro | [Materiais para apresentacao](#demonstracao-animada) |
+| Apresentacao e roteiro | [Apresentacao oficial no Canva e materiais de apoio](docs/README.md) |
 | Evidencias registradas | [Validacao de entrega em 25/11/2026](docs/evidence/2026-11-25/README.md) e [capturas de 23/11/2026](docs/evidence/2026-11-23/README.md) |
 
 Para reproduzir em outra maquina, obtenha o repositorio e entre na sua raiz:
@@ -51,15 +51,16 @@ pode conter espacos; nenhum diretorio em `/home` precisa ter nome fixo.
 
 Materiais para apresentacao:
 
-- [PDF da equipe](docs/FleetPosix.pdf) — dez paginas, com o roteiro de funcionalidades;
-- [PowerPoint animado](docs/FleetPOSIX_apresentacao_animada.pptx) — seis slides;
-- [PDF estatico de referencia](docs/FleetPOSIX_apresentacao.pdf) — seis paginas;
-- [roteiro de 5–8 minutos](docs/FleetPOSIX_roteiro.md);
+- [apresentacao oficial no Canva](https://www.canva.com/design/DAHb4r2qxhU/bvRyO4jD2x-MbVPsWD2EyQ/edit);
+- [atalho local da apresentacao](docs/FleetPOSIX_apresentacao.url);
+- [roteiro de apoio](docs/FleetPOSIX_roteiro.md);
 - [video seguro em MP4](docs/media/fleet-safe.mp4);
 - [video inseguro em MP4](docs/media/fleet-unsafe.mp4).
 
-Os GIFs ficam incorporados ao PowerPoint e animam durante o modo apresentacao.
-Caso o aplicativo usado nao reproduza GIF, abra os MP4 ou use o PDF estatico.
+A versao do Canva substitui as apresentacoes anteriores de `docs/`. Os GIFs
+e MP4 permanecem como material de apoio. Para entregar ou apresentar sem
+internet, exporte a versao atual do Canva e confira o arquivo antes de usar.
+Orientacoes e referencia oficial: [`docs/README.md`](docs/README.md).
 
 ## Equipe
 
@@ -282,7 +283,7 @@ No PowerShell, os mesmos alvos funcionam com `wsl -d Ubuntu -- make verify`.
 | `make test-safe` / `make test-unsafe` | Nomes alternativos para `make demo` / `make demo-unsafe`. |
 | `make run` / `make run-unsafe` | Compilam e iniciam a operacao online correspondente com visualizacao. |
 | `make ipc` | Lista processos e objetos IPC: memoria compartilhada, filas e FIFO da maquina, incluindo possiveis outras execucoes. Nao remove recursos. |
-| `make slides` | Regenera o PDF de seis paginas; requer `reportlab` no Python selecionado. |
+| `make slides` | Mostra o link da apresentacao oficial no Canva e orienta a exportacao para entrega. |
 | `make clean` | Remove apenas `build/`, `install/` e `log/` desta copia, incluindo resultados e logs locais. Recusa links simbolicos nesses destinos. |
 
 O `make verify` ja executa as duas demonstracoes por meio da suite de integracao.
@@ -306,7 +307,7 @@ instala pacotes, executa `sudo`, altera licenca ou publica no Git.
 | `ROS_DOMAIN_ID` | `0` | Dominio das simulacoes. Os testes mantem seu dominio separado. |
 | `JOBS` | `2` | Paralelismo de compilacao CMake e numero de workers do colcon. Deve ser inteiro positivo. |
 | `DEMO_TIMEOUT` | `45s` | Limite externo por demo offscreen em `make simulate`; aceita a sintaxe do GNU timeout. |
-| `PYTHON` | `python3` | Python do diagnostico opcional e da geracao dos slides. O build descobre seu Python via CMake. |
+| `PYTHON` | `python3` | Python conferido pelo diagnostico do ambiente. O build descobre seu Python via CMake. |
 
 Exemplo para executar a comparacao em um dominio ROS separado:
 
@@ -326,9 +327,8 @@ no Windows/WSL. Os arquivos de texto usam LF.
 - `build/fleet_posix/test_logs/`: logs individuais dos cenarios de integracao.
 - `make ipc`: inspecao de processos e memoria/filas POSIX apos a execucao.
 
-`rosdep` e `reportlab` sao opcionais: o primeiro so e usado por `make deps`;
-o segundo apenas para regenerar o PDF pronto no repositorio. A verificacao
-`make deps` e separada: exige rosdep instalado, sua base inicializada e as
+`rosdep` e usado somente por `make deps`. Essa verificacao
+e separada: exige rosdep instalado, sua base inicializada e as
 dependencias resolvidas. Na validacao de 25/11/2026, rosdep nao estava instalado;
 essa verificacao nao foi executada. O build encontrou as dependencias CMake.
 
@@ -336,8 +336,9 @@ essa verificacao nao foi executada. O build encontrou as dependencias CMake.
 
 1. Execute `make verify` e `make simulate` antes de apresentar.
 2. Confira os logs e use `make ipc` depois de encerrar suas execucoes.
-3. Abra o PowerPoint em modo apresentacao para conferir as animacoes; mantenha
-   PDF e videos como alternativas.
+3. Abra a apresentacao oficial no Canva e confira o acesso. Se precisar de
+   uma copia offline, exporte a versao atual e confira sua reproducao; mantenha
+   os videos das simulacoes como apoio.
 4. Para demonstrar ao vivo, execute `make demo` e depois `make demo-unsafe`.
 5. Para demonstrar comandos online, use o exemplo de pausa e status acima.
 
@@ -360,7 +361,7 @@ artefatos locais nao comprova que o codigo atual passou nas verificacoes.
 | Comparacao segura/insegura | Validada | 3 missoes por modo; 0 colisoes no seguro, 2 no inseguro na referencia. |
 | WSLg e operacao online | Validados | Demo visual e shutdown com pausa/corredor ocupado exercitados. |
 | Automacao Make | Validada | make -j4 verify e make simulate aprovados; propagacao de falhas e limpeza conferidas. |
-| Apresentacao | Disponivel | PDF da equipe (10 paginas), PowerPoint animado, PDF de referencia (6), roteiro e videos em docs/. |
+| Apresentacao | Referencia oficial definida | Versao do Canva indicada em docs/README.md; exportacao offline pela equipe quando necessaria. |
 | Dependencias via rosdep | Nao verificado | rosdep ausente nesta maquina; verificacao opcional separada com make deps. |
 | Dados da equipe e licenca | Definidos | Equipe e divisao de trabalho na secao Equipe; pacote declarado Proprietary. |
 <!-- andamento:fim -->
@@ -374,21 +375,14 @@ para a disciplina estao em [`src/fleet_posix/README.md`](src/fleet_posix/README.
 
 ## Material de entrega
 
-- PDF da equipe, dez paginas: [`docs/FleetPosix.pdf`](docs/FleetPosix.pdf).
-- PDF de referencia, seis paginas: [`docs/FleetPOSIX_apresentacao.pdf`](docs/FleetPOSIX_apresentacao.pdf).
-- Apresentacao animada: [`docs/FleetPOSIX_apresentacao_animada.pptx`](docs/FleetPOSIX_apresentacao_animada.pptx).
+- Apresentacao oficial: [FleetPOSIX no Canva](https://www.canva.com/design/DAHb4r2qxhU/bvRyO4jD2x-MbVPsWD2EyQ/edit).
+- Atalho da apresentacao: [`docs/FleetPOSIX_apresentacao.url`](docs/FleetPOSIX_apresentacao.url).
+- Orientacoes para usar e exportar a apresentacao: [`docs/README.md`](docs/README.md).
 - Roteiro: [`docs/FleetPOSIX_roteiro.md`](docs/FleetPOSIX_roteiro.md).
 - Evidencias: [validacao automatizada de 25/11/2026](docs/evidence/2026-11-25/README.md) e [capturas e logs de 23/11/2026](docs/evidence/2026-11-23/README.md).
-- Geradores editaveis: [`docs/generate_slides.py`](docs/generate_slides.py) e [`docs/generate_presentation.py`](docs/generate_presentation.py).
 - Mantenedor no `package.xml`: Luiz Felipe Souza da Silva (luix.felipe008@gmail.com).
 - Integrantes e divisao de trabalho: secao [Equipe](#equipe).
 - Sem licenca de codigo aberto (`Proprietary` no `package.xml`).
 
-Os slides incluem os resultados de `make verify`, o andamento e as pendencias,
-e o roteiro Make para conferir o ambiente, testar e executar as simulacoes.
-
-Para regenerar o PDF, execute `python docs/generate_slides.py` em um ambiente
-com `reportlab` instalado; o alvo `make slides` executa esse gerador. Para o
-PowerPoint, execute `python docs/generate_presentation.py` em um ambiente com
-`python-pptx` e as midias em `docs/media/`. Esses pacotes sao exclusivos da
-geracao do material; os arquivos prontos podem ser usados sem eles.
+Use `make slides` para consultar a referencia oficial. Edicoes e exportacoes
+devem partir do Canva, para evitar divergencia entre versoes da apresentacao.

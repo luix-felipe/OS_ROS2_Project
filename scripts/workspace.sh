@@ -114,11 +114,6 @@ check_environment() {
   else
     printf '[AVISO] rosdep ausente: make deps ficara pendente; build/test usam os pacotes ROS instalados.\n'
   fi
-  if command -v "${PYTHON}" >/dev/null 2>&1 && "${PYTHON}" -c 'import reportlab' >/dev/null 2>&1; then
-    printf '[OK] reportlab disponivel para make slides.\n'
-  else
-    printf '[AVISO] reportlab ausente neste Python; opcional, exclusivo de make slides.\n'
-  fi
   if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
     printf '[INFO] Sessao grafica anunciada; make demo/run verificam a execucao no WSLg.\n'
   else
@@ -298,10 +293,12 @@ case "${TASK}" in
   demo|demo-unsafe|run|run-unsafe) run_visual ;;
   ipc) show_ipc ;;
   slides)
-    require_command "${PYTHON}"
-    "${PYTHON}" -c 'import reportlab' >/dev/null 2>&1 || \
-      fail "reportlab nao esta instalado em ${PYTHON}. Escolha PYTHON com reportlab para gerar os slides."
-    "${PYTHON}" docs/generate_slides.py
+    [[ -f docs/FleetPOSIX_apresentacao.url ]] || fail 'Atalho da apresentacao oficial ausente em docs/.'
+    presentation_url="$(sed -n 's/^URL=//p' docs/FleetPOSIX_apresentacao.url)"
+    [[ -n "${presentation_url}" ]] || fail 'Endereco da apresentacao ausente no atalho.'
+    printf '[APRESENTACAO] FleetPOSIX - versao oficial no Canva\n%s\n' "${presentation_url}"
+    printf 'Edite e exporte PDF/PPTX pelo Canva. Este alvo mostra o link; nao baixa nem gera um arquivo.\n'
+    printf 'Orientacoes: docs/README.md\n'
     ;;
   clean) clean_workspace ;;
   *) fail "Tarefa desconhecida: ${TASK}. Consulte make help." ;;
