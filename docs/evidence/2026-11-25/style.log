@@ -1,0 +1,11 @@
+
+[ESTILO] Conferindo C++ sem alterar arquivos.
+No code style divergence in file 'src/fleet_posix/include/fleet_posix/common.hpp'
+
+No code style divergence in file 'src/fleet_posix/src/amr_agent.cpp'
+
+No code style divergence in file 'src/fleet_posix/src/supervisor.cpp'
+
+No code style divergence in file 'src/fleet_posix/test/test_shared_state.cpp'
+
+No problems found

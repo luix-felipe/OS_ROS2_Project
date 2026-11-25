@@ -23,17 +23,21 @@ SLAM ou planejamento de trajetoria de um AMR real.
 
 Na raiz do workspace, o `Makefile` oferece `make env`, `make build`, `make test`
 e `make verify`. Cada alvo carrega seu ambiente ROS automaticamente. Use
-`make help` para todas as tarefas e `make status` para o andamento documentado
+`make help` para os principais alvos e `make status` para o andamento documentado
 e os artefatos locais. O guia de automacoes esta no README da raiz. Os comandos
 manuais equivalentes permanecem abaixo.
 
 ```bash
 # Execute na raiz do repositorio, em um terminal Ubuntu/WSL.
 source /opt/ros/jazzy/setup.bash
-rosdep check --from-paths src --ignore-src --rosdistro jazzy
 colcon build --symlink-install
 source install/setup.bash
 ```
+
+A verificacao separada `rosdep check --from-paths src --ignore-src --rosdistro
+jazzy` e opcional neste fluxo e exige rosdep instalado e sua base inicializada.
+O CMake confere as dependencias utilizadas pelo build. No Windows, execute
+build e testes pelo Ubuntu/WSL.
 
 ## Demonstracao automatica
 
@@ -94,12 +98,16 @@ encerramento geral.
 ### Comandos por named pipe (FIFO)
 
 Na operacao online o supervisor cria `/tmp/fleet_posix_ctl_<pid>` com `mkfifo`
-e o multiplexa com o terminal via `poll()`. Em outro terminal:
+e o multiplexa com o terminal via `poll()`. Em outro terminal, substitua
+`<pid>` pelo numero impresso na inicializacao:
 
 ```bash
-echo "enviar 1 9.0 5.15" > /tmp/fleet_posix_ctl_<pid>
-echo "status"            > /tmp/fleet_posix_ctl_<pid>
+FIFO="/tmp/fleet_posix_ctl_<pid>"
+test -p "$FIFO" && printf '%s\n' 'enviar 1 9.0 5.15' > "$FIFO"
+test -p "$FIFO" && printf '%s\n' 'status' > "$FIFO"
 ```
+
+O teste `test -p` evita escrever em um caminho que nao seja um FIFO existente.
 
 O caminho exato e impresso na inicializacao. O supervisor mantem um escritor
 interno aberto, de modo que o fechamento de cada `echo` nao gera EOF continuo.
@@ -156,6 +164,10 @@ Turtlesim offscreen. Um dominio ROS separado evita interferir na demonstracao
 padrao; defina `FLEET_TEST_ROS_DOMAIN_ID` para escolher outro dominio. Cada
 execucao verifica a ausencia de processos e IPCs proprios ao terminar. Logs:
 `build/fleet_posix/test_logs/`. Os testes nao executam a interface grafica.
+
+O conjunto possui 13 cenarios no total: 12 Python e um C++, agrupados nas duas
+entradas CTest. A validacao de entrega de 25/11/2026 esta registrada em
+[`docs/evidence/2026-11-25/README.md`](../../docs/evidence/2026-11-25/README.md).
 
 O mutex da frota e compartilhado e robusto. `EOWNERDEAD` permite recuperar o
 lock para encerrar a frota e limpar recursos se um processo morrer durante a

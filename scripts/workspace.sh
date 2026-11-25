@@ -42,35 +42,28 @@ load_overlay() {
 # Mostra a ajuda dos alvos Make.
 show_help() {
   cat <<'HELP'
-FleetPOSIX - automacoes do workspace (Ubuntu 24.04 / WSL 2, ROS 2 Jazzy)
+FleetPOSIX - Execução e testes pelo Make
 
-Comece aqui:
-  make                 Mostra esta ajuda, sem compilar nem abrir janelas.
+Os alvos principais são:
+  make demo e make demo-unsafe: demonstrações visuais no WSLg;
+  make run e make run-unsafe: operação online com visualização;
+  make simulate: comparação segura e insegura sem janela, com resumo;
+  make test: testes sem interface gráfica;
+  make verify: ambiente, build, estilo e testes em sequência;
+  make ipc: lista processos e objetos IPC (memória compartilhada, filas e FIFO)
+    em execução.
+
+Outros alvos de desenvolvimento:
+  make help            Mostra esta ajuda; tambem e o comportamento de make.
   make status          Explica o andamento e mostra artefatos/resultados locais.
   make env             Confere ferramentas e pacotes ROS; avisa sobre opcionais.
   make deps            Confere dependencias com rosdep (exige ferramenta e base).
-
-Desenvolvimento e verificacao:
   make build           Compila com colcon, C++17, -Werror e testes habilitados.
   make lint            Confere o estilo C++ com ament_uncrustify, sem modificar.
   make format          Aplica a formatacao C++ (modifica fontes).
-  make test            Compila e executa os testes sem janela; imprime resultados.
   make report          Mostra os ultimos resultados registrados, sem repetir testes.
-  make verify          Executa env -> build -> lint -> test; para na primeira falha.
 
-Simulacoes:
-  make simulate        Compila e compara seguro/inseguro offscreen, salvando logs.
-  make demo            Compila e abre a demo segura no WSLg (3 missoes, 0 colisoes).
-  make demo-unsafe     Compila e abre a demo insegura (colisoes logicas esperadas).
-  make run             Compila e abre operacao online segura no terminal + WSLg.
-  make run-unsafe      Operacao online sem exclusao mutua do corredor.
-
-Inspecao e entrega:
-  make ipc             Lista processos e objetos fleet_posix_*; nao remove nada.
-  make slides          Regenera os 6 slides em PDF (Python com reportlab).
-  make clean           Remove SOMENTE build/, install/ e log/ deste workspace.
-
-Fluxo sugerido: make status -> make env -> make verify -> make simulate -> make demo
+Fluxo sugerido: make status -> make env -> make verify -> make demo -> make demo-unsafe
 Comandos online: enviar <amr> <x> <y> | pausar <amr> | retomar <amr> | status | sair
 Ctrl+C solicita shutdown. Turtlesim e uma abstracao visual 2D.
 
@@ -214,6 +207,10 @@ run_visual() {
   load_overlay
   [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]] || \
     fail 'Sessao grafica ausente. Use make simulate para executar sem janela.'
+  # Os alvos visuais abrem janela mesmo se o terminal herdou Qt sem interface.
+  case "${QT_QPA_PLATFORM:-}" in
+    offscreen|minimal) unset QT_QPA_PLATFORM ;;
+  esac
   local -a options=()
   case "${TASK}" in
     demo) options=(--demo) ;;

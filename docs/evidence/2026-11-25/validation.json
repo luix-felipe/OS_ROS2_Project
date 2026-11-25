@@ -1,0 +1,41 @@
+{
+  "validation_date": "2026-11-25",
+  "timezone": "America/Manaus",
+  "command": "make -j4 verify",
+  "result": "passed",
+  "source_commit_at_validation": "6e1bde4b0b1a81aa55117f45cd669084d3c3c622",
+  "scope": "Fonte do pacote identificado por hash; documentacao e alvos Make possuem ajustes locais.",
+  "python_scenarios": 12,
+  "cpp_scenarios": 1,
+  "ctest_entries": 2,
+  "results": {
+    "fleet_posix_shared_state": {
+      "failures": 0,
+      "errors": 0
+    },
+    "fleet_posix_integration": {
+      "failures": 0,
+      "errors": 0
+    }
+  },
+  "demos": {
+    "safe": {
+      "completed_missions": 3,
+      "logical_collisions": 0
+    },
+    "unsafe": {
+      "completed_missions": 3,
+      "logical_collisions": 2
+    }
+  },
+  "rosdep_check": "not_run_tool_not_installed",
+  "source_sha256": {
+    "src/fleet_posix/CMakeLists.txt": "f0c0833ce965399c16f499e74a8be34e94b02f24631541961876950b122ff012",
+    "src/fleet_posix/package.xml": "2346b950e4d0bd4bc65dd519ee96d3ffacefba00434d9787f190e12f38cdec45",
+    "src/fleet_posix/include/fleet_posix/common.hpp": "7c0e5de8ab15cebaededad41359e7d0b6dc06b4a25018a7e7689d9653bdd0554",
+    "src/fleet_posix/src/supervisor.cpp": "323fc327e2dd73b870fe0e9f01e4510c1e81688843bea4acbf89e1af34b8e51a",
+    "src/fleet_posix/src/amr_agent.cpp": "47612d003a199468eb6a28f7c77f404fff1c823a71a7cc92f521f9d5e4093ca6",
+    "src/fleet_posix/test/test_integration.py": "eb214902d78e3dfe5f5dbbd3f6cf93455cdf1986ca36fe0d19271da663cf06aa",
+    "src/fleet_posix/test/test_shared_state.cpp": "072bba4d26fdc0f87f70a050b5bcd8646283b2ad7bdd5449aae963bb07d11561"
+  }
+}

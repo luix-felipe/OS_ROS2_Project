@@ -2,6 +2,12 @@
 
 Duração estimada: **6 a 7 minutos**.
 
+Antes de apresentar, executar `make verify` e `make simulate` na raiz do
+repositorio, no Ubuntu/WSL. A referencia de entrega de 25/11/2026 aprova os
+13 cenarios (12 Python + um C++). Os logs e as capturas de 23/11/2026 ficam em
+`docs/evidence/2026-11-23/`; a validacao atual esta em
+`docs/evidence/2026-11-25/README.md`.
+
 ## Slide 1 — Motivação (50 s)
 
 “Nosso problema é coordenar três robôs independentes que compartilham um
@@ -51,8 +57,32 @@ make demo-unsafe
 
 “Além da demonstração, temos doze cenários Python e um teste C++ do mutex
 robusto. O shutdown possui contingência com SIGTERM, SIGKILL e waitpid, e as
-execuções terminam sem processos ou objetos IPC residuais. O próximo passo
-seria trocar o Turtlesim por Gazebo ou robôs reais, mantendo o plano POSIX.”
+execuções terminam sem processos ou objetos IPC residuais. Os alvos Make
+carregam o ambiente e permitem repetir a comparação. O Turtlesim é uma
+abstração visual 2D; o resultado de zero colisões se refere às rotas de
+referência, sem planejamento ou desvio de obstáculos.”
+
+Se a versão usada for o PDF estático, o slide 6 apresenta diretamente o fluxo
+Make. Mostre `make help`, explique `make verify`, `make simulate`, `make demo`
+e `make run`; `make ipc` inspeciona os processos, a memória, as filas e o FIFO.
+
+## Exemplo online para a demonstração ao vivo
+
+Abra `make run`, aguarde os três agentes online e envie:
+
+```text
+enviar 1 9.0 5.15
+enviar 2 5.5 9.0
+enviar 3 2.0 5.85
+```
+
+Durante o movimento, execute `pausar 1` e `status`. Explique que um AMR
+pausado dentro do corredor conserva sua reserva. Depois use `retomar 1` e
+`status`. Encerre com `sair` ou `Ctrl+C` e confira `make ipc`.
+
+Para uma comparação online insegura, inicie `make run-unsafe` em uma nova
+execução e envie as mesmas três missões. A contagem depende do momento de
+envio; as demos automáticas são o roteiro para comparar os resultados.
 
 ## Plano de contingência
 

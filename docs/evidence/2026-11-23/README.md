@@ -1,7 +1,8 @@
 # Evidencias visuais — 2026-11-23
 
-Capturas reais do Turtlesim executando a revisao presente em
-`revisao-fleetposix.patch`, posteriormente incorporada ao branch `main`.
+Capturas reais do Turtlesim executando a revisao de sincronizacao e do canal
+FIFO incorporada ao branch `main`. Os arquivos abaixo preservam a evidencia
+daquela execucao; nao representam uma nova validacao do codigo atual.
 
 ## Resultado observado
 

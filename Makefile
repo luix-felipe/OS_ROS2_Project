@@ -8,7 +8,7 @@ SHELL := /bin/bash
 # Evita executar build, testes e simulacoes simultaneamente com make -j.
 .NOTPARALLEL:
 .PHONY: help status env deps build lint format test report verify simulate \
-        demo demo-unsafe run run-unsafe ipc slides clean
+        test-safe test-unsafe demo demo-unsafe run run-unsafe ipc slides clean
 
 ROS_DISTRO ?= jazzy
 ROS_SETUP ?= /opt/ros/$(ROS_DISTRO)/setup.bash
@@ -40,6 +40,12 @@ verify: env build lint test
 # Simulacao automatica sem janela, com logs separados e resumo dos dois modos.
 simulate: build
 	@bash scripts/workspace.sh simulate
+
+# Testes visuais individuais: compilam e executam as tres missoes automaticamente.
+# Reutilizam as demos existentes e preservam os nomes anteriores como alternativas.
+test-safe: demo
+
+test-unsafe: demo-unsafe
 
 # Interface grafica e operacao interativa sao opt-in; nunca entram em verify.
 demo demo-unsafe run run-unsafe: build

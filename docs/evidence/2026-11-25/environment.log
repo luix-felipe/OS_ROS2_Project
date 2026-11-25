@@ -1,0 +1,24 @@
+
+[AMBIENTE] Conferindo o workspace: /mnt/c/Users/luixf/OneDrive/Desktop/Faculdade/Sistema Operacionais Embarcados/OS_ROS2_Project
+[OK] make                 /usr/bin/make
+[OK] g++                  /usr/bin/g++
+[OK] cmake                /usr/bin/cmake
+[OK] python3              /usr/bin/python3
+[OK] colcon               /usr/bin/colcon
+[OK] ros2                 /opt/ros/jazzy/bin/ros2
+[OK] ament_uncrustify     /opt/ros/jazzy/bin/ament_uncrustify
+[OK] timeout              /usr/bin/timeout
+[OK] Pacote ROS: ament_cmake
+[OK] Pacote ROS: ament_cmake_test
+[OK] Pacote ROS: ament_index_cpp
+[OK] Pacote ROS: geometry_msgs
+[OK] Pacote ROS: rclcpp
+[OK] Pacote ROS: turtlesim
+[OK] Diretorio de IPC acessivel: /dev/shm
+[OK] Diretorio de IPC acessivel: /dev/mqueue
+[INFO] ROS_DISTRO=jazzy | ROS_DOMAIN_ID=0 | JOBS=2
+g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+[AVISO] rosdep ausente: make deps ficara pendente; build/test usam os pacotes ROS instalados.
+[AVISO] reportlab ausente neste Python; opcional, exclusivo de make slides.
+[INFO] Sessao grafica anunciada; make demo/run verificam a execucao no WSLg.
+[OK] Pre-requisitos de build e testes encontrados; isso nao substitui make deps.

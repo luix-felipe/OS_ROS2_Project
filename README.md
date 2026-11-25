@@ -15,6 +15,33 @@ POSIX. Um modo `--unsafe` desliga a exclusao mutua do corredor e expoe a
 condicao de corrida como colisoes logicas, permitindo comparar problema e
 solucao.
 
+## Entrega e reproducao
+
+| Item | Local ou comando |
+| --- | --- |
+| Codigo-fonte, build e testes | `src/fleet_posix/` e `Makefile` |
+| Integrantes e responsabilidades | [Equipe](#equipe) |
+| Validacao automatizada | `make verify`: build, estilo, teste C++ e 12 cenarios Python |
+| Comparacao sem janela | `make simulate`: seguro com 0 colisoes; inseguro com pelo menos 1 |
+| Demonstracao visual | `make demo` e `make demo-unsafe` no WSLg |
+| Apresentacao e roteiro | [Materiais para apresentacao](#demonstracao-animada) |
+| Evidencias registradas | [Validacao de entrega em 25/11/2026](docs/evidence/2026-11-25/README.md) e [capturas de 23/11/2026](docs/evidence/2026-11-23/README.md) |
+
+Para reproduzir em outra maquina, obtenha o repositorio e entre na sua raiz:
+
+```bash
+git clone https://github.com/luix-felipe/OS_ROS2_Project.git
+cd OS_ROS2_Project
+make env
+make verify
+make simulate
+```
+
+Execute esses comandos no Ubuntu/WSL com os pre-requisitos abaixo instalados.
+Se a copia estiver no Windows, abra o Ubuntu na pasta do repositorio ou use
+`wsl -d Ubuntu -- make help` pelo PowerShell nessa pasta. O caminho da raiz
+pode conter espacos; nenhum diretorio em `/home` precisa ter nome fixo.
+
 ## Demonstracao animada
 
 | Modo seguro | Modo inseguro |
@@ -24,8 +51,9 @@ solucao.
 
 Materiais para apresentacao:
 
+- [PDF da equipe](docs/FleetPosix.pdf) — dez paginas, com o roteiro de funcionalidades;
 - [PowerPoint animado](docs/FleetPOSIX_apresentacao_animada.pptx) — seis slides;
-- [PDF estatico](docs/FleetPOSIX_apresentacao.pdf) — alternativa de seguranca;
+- [PDF estatico de referencia](docs/FleetPOSIX_apresentacao.pdf) — seis paginas;
 - [roteiro de 5–8 minutos](docs/FleetPOSIX_roteiro.md);
 - [video seguro em MP4](docs/media/fleet-safe.mp4);
 - [video inseguro em MP4](docs/media/fleet-unsafe.mp4).
@@ -55,7 +83,8 @@ Caso o aplicativo usado nao reproduza GIF, abra os MP4 ou use o PDF estatico.
 | Correcoes (secao critica, relogio monotonico, stdin dos filhos, `demo.sh`) e canal FIFO | Diogo |
 | Revisao da documentacao (README) | Diogo |
 
-Projeto academico, sem licenca de codigo aberto.
+Uso academico. O pacote declara `Proprietary` no `package.xml`; a equipe nao
+definiu uma licenca de codigo aberto.
 
 ## Arquitetura
 
@@ -109,6 +138,10 @@ sudo apt install ros-jazzy-ros-base ros-jazzy-turtlesim ros-jazzy-ament-cmake \
   ros-jazzy-ament-uncrustify python3-colcon-common-extensions build-essential
 ```
 
+`make env` confere o compilador, CMake, Python 3, colcon, ROS 2, ferramentas de
+estilo, pacotes ROS e acesso a `/dev/shm` e `/dev/mqueue`. A referencia validada
+usa GCC 13, C++17 e GNU Make. `make verify` nao instala dependencias.
+
 O codigo usa IPC POSIX do Linux: nao compila no Windows nativo. Para a
 demonstracao visual no WSL e necessario WSLg (`DISPLAY` ou `WAYLAND_DISPLAY`).
 
@@ -117,23 +150,74 @@ demonstracao visual no WSL e necessario WSLg (`DISPLAY` ou `WAYLAND_DISPLAY`).
 Na raiz do repositorio (nao e preciso `source` antes do `make`):
 
 ```bash
-make verify          # ambiente -> build -> estilo -> testes, sem abrir janela
-make demo            # demo visual segura: tres missoes, zero colisoes
-make demo-unsafe     # demo visual insegura: colisoes logicas esperadas
-make run             # operacao online (comandos abaixo)
+make demo            # demonstracao visual segura no WSLg
+make demo-unsafe     # demonstracao visual insegura no WSLg
+make run             # operacao online segura com visualizacao
+make run-unsafe      # operacao online insegura com visualizacao
 make simulate        # comparacao segura/insegura sem janela, com resumo
+make test            # testes sem interface grafica
+make verify          # ambiente -> build -> estilo -> testes em sequencia
+make ipc             # lista processos e objetos IPC: memoria, filas e FIFO
 ```
 
-Comandos da operacao online, no terminal ou pelo FIFO impresso na inicializacao:
+Comandos da operacao online, um por linha no terminal ou no FIFO:
 
 ```text
-enviar <amr> <x> <y>   pausar <amr>   retomar <amr>   status   sair
+enviar <amr> <x> <y>
+pausar <amr>
+retomar <amr>
+status
+sair
 ```
 
-```bash
-# Exemplo em outro terminal (substitua <pid> pelo PID mostrado pelo supervisor)
-echo "enviar 1 9.0 5.15" > /tmp/fleet_posix_ctl_<pid>
+Os IDs aceitos sao 1, 2 e 3. As coordenadas ficam entre 0.5 e 10.5; destinos
+dentro do circulo central de raio 2.35 em torno de (5.5, 5.5) sao recusados.
+O intervalo de coordenadas e a exclusao central valem nos dois modos.
+
+### Exemplo seguro: missao, pausa e status
+
+Execute `make run` e aguarde os tres agentes ficarem online. Envie:
+
+```text
+enviar 1 9.0 5.15
+enviar 2 5.5 9.0
+enviar 3 2.0 5.85
 ```
+
+Durante o movimento, pause o AMR 1 e consulte o estado:
+
+```text
+pausar 1
+status
+```
+
+Continue com `retomar 1` e consulte `status` novamente. Se o AMR pausado
+possuir o corredor, os demais esperam ate ele retomar e liberar a regiao.
+Use `sair` ou `Ctrl+C` para encerrar a frota e remover seus IPCs.
+
+### Exemplo inseguro: cruzamento simultaneo
+
+Inicie uma nova execucao com `make run-unsafe`, aguarde os agentes ficarem
+online e envie as mesmas tres missoes acima. As rotas se cruzam no centro;
+sem o semaforo, o detector pode registrar colisoes logicas. `status` mostra
+o contador. Para a comparacao automatica com resultado verificado, use
+`make simulate` ou `make demo-unsafe`.
+
+### Comandos de outro terminal (FIFO)
+
+O supervisor imprime `/tmp/fleet_posix_ctl_<pid>` na inicializacao. Substitua
+`<pid>` pelo numero mostrado e confira o caminho antes de escrever:
+
+```bash
+FIFO="/tmp/fleet_posix_ctl_<pid>"
+test -p "$FIFO" && printf '%s\n' 'status' > "$FIFO"
+test -p "$FIFO" && printf '%s\n' 'enviar 1 9.0 5.15' > "$FIFO"
+```
+
+Esse canal pertence a uma execucao especifica e e removido no shutdown. O
+FIFO recebe texto; as filas POSIX continuam levando os comandos aos agentes.
+
+### Comandos manuais equivalentes
 
 Equivalente manual, sem Make:
 
@@ -153,10 +237,31 @@ corredor ocupado com dono pausado, falhas parciais de IPC, morte de agente).
 Cada cenario confere que nao restam processos nem objetos IPC
 (`/dev/shm`, `/dev/mqueue`, FIFO em `/tmp`).
 
+Sao **13 cenarios no total**, agrupados em **duas entradas CTest**. O resumo
+do `colcon test-result` pode contabilizar os relatorios CTest e JUnit; essa
+contagem de relatorios nao corresponde ao numero de cenarios Python.
+
+Resultados esperados nas demonstracoes:
+
+| Modo | Missoes concluidas | Colisoes logicas |
+| --- | --- | --- |
+| Seguro | 3 | 0 |
+| Inseguro | 3 | Pelo menos 1; foram observadas 2 nas evidencias registradas |
+
+O executavel retorna erro se uma demo nao concluir as missoes no prazo ou
+se a contagem de colisoes nao corresponder ao modo. O modo online depende
+dos comandos e do tempo de envio do operador, sem prometer contagem fixa.
+
+Para acompanhar as tres missoes automaticamente em uma janela do Turtlesim,
+use `make demo` (seguro) ou `make demo-unsafe` (inseguro). Cada alvo compila,
+abre o WSLg e encerra ao concluir a demonstracao, retornando erro se o resultado
+for inesperado. `make test-safe` e `make test-unsafe` continuam disponiveis como
+nomes alternativos. Esses testes visuais nao executam a suite CTest completa.
+
 ## Automacao Make
 
 No PowerShell, os mesmos alvos funcionam com `wsl -d Ubuntu -- make verify`.
-`make help` lista todos os alvos; `make status` mostra o andamento.
+`make help` lista os principais alvos; `make status` mostra o andamento.
 
 ### Referencia dos alvos Make
 
@@ -174,8 +279,9 @@ No PowerShell, os mesmos alvos funcionam com `wsl -d Ubuntu -- make verify`.
 | `make verify` | Encadeia ambiente, build, estilo e testes. Compila uma vez e interrompe na primeira etapa que falhar. |
 | `make simulate` | Compila e executa primeiro seguro e depois inseguro, sem janela, com timeout e logs separados. |
 | `make demo` / `make demo-unsafe` | Compilam e abrem a demonstracao correspondente no WSLg. |
+| `make test-safe` / `make test-unsafe` | Nomes alternativos para `make demo` / `make demo-unsafe`. |
 | `make run` / `make run-unsafe` | Compilam e iniciam a operacao online correspondente com visualizacao. |
-| `make ipc` | Lista processos e objetos `fleet_posix_*` da maquina, incluindo possiveis outras execucoes. Nao remove recursos. |
+| `make ipc` | Lista processos e objetos IPC: memoria compartilhada, filas e FIFO da maquina, incluindo possiveis outras execucoes. Nao remove recursos. |
 | `make slides` | Regenera o PDF de seis paginas; requer `reportlab` no Python selecionado. |
 | `make clean` | Remove apenas `build/`, `install/` e `log/` desta copia, incluindo resultados e logs locais. Recusa links simbolicos nesses destinos. |
 
@@ -221,12 +327,29 @@ no Windows/WSL. Os arquivos de texto usam LF.
 - `make ipc`: inspecao de processos e memoria/filas POSIX apos a execucao.
 
 `rosdep` e `reportlab` sao opcionais: o primeiro so e usado por `make deps`;
-o segundo apenas para regenerar os slides (o PDF pronto esta no repositorio).
+o segundo apenas para regenerar o PDF pronto no repositorio. A verificacao
+`make deps` e separada: exige rosdep instalado, sua base inicializada e as
+dependencias resolvidas. Na validacao de 25/11/2026, rosdep nao estava instalado;
+essa verificacao nao foi executada. O build encontrou as dependencias CMake.
+
+### Preparacao para a apresentacao
+
+1. Execute `make verify` e `make simulate` antes de apresentar.
+2. Confira os logs e use `make ipc` depois de encerrar suas execucoes.
+3. Abra o PowerPoint em modo apresentacao para conferir as animacoes; mantenha
+   PDF e videos como alternativas.
+4. Para demonstrar ao vivo, execute `make demo` e depois `make demo-unsafe`.
+5. Para demonstrar comandos online, use o exemplo de pausa e status acima.
+
+O Turtlesim e uma abstracao visual 2D. O MVP nao faz planejamento de rotas,
+desvio de obstaculos ou validacao de safety industrial. Os resultados de
+ausencia de colisao se referem as rotas de referencia; evite destinos que
+coincidam com a posicao de espera de outro AMR.
 
 ## Andamento do projeto
 
 <!-- andamento:inicio -->
-Referencia validada em 2026-11-21. O quadro descreve o projeto; a existencia de
+Referencia revalidada em 2026-11-25. O quadro descreve o projeto; a existencia de
 artefatos locais nao comprova que o codigo atual passou nas verificacoes.
 
 | Etapa | Situacao | Evidencia ou proximo passo |
@@ -237,9 +360,9 @@ artefatos locais nao comprova que o codigo atual passou nas verificacoes.
 | Comparacao segura/insegura | Validada | 3 missoes por modo; 0 colisoes no seguro, 2 no inseguro na referencia. |
 | WSLg e operacao online | Validados | Demo visual e shutdown com pausa/corredor ocupado exercitados. |
 | Automacao Make | Validada | make -j4 verify e make simulate aprovados; propagacao de falhas e limpeza conferidas. |
-| Apresentacao | Pronta | Seis paginas em docs/FleetPOSIX_apresentacao.pdf. |
-| Dependencias via rosdep | Pendente no ambiente | Instalar/inicializar rosdep e executar make deps. |
-| Dados da equipe e licenca | Concluido | Equipe e divisao de trabalho na secao Equipe; sem licenca (Proprietary no package.xml). |
+| Apresentacao | Disponivel | PDF da equipe (10 paginas), PowerPoint animado, PDF de referencia (6), roteiro e videos em docs/. |
+| Dependencias via rosdep | Nao verificado | rosdep ausente nesta maquina; verificacao opcional separada com make deps. |
+| Dados da equipe e licenca | Definidos | Equipe e divisao de trabalho na secao Equipe; pacote declarado Proprietary. |
 <!-- andamento:fim -->
 
 Para acompanhar outra copia ou apos alterar os fontes, execute `make status`
@@ -251,8 +374,12 @@ para a disciplina estao em [`src/fleet_posix/README.md`](src/fleet_posix/README.
 
 ## Material de entrega
 
-- Apresentacao de seis paginas: [`docs/FleetPOSIX_apresentacao.pdf`](docs/FleetPOSIX_apresentacao.pdf).
-- Gerador editavel dos slides: [`docs/generate_slides.py`](docs/generate_slides.py).
+- PDF da equipe, dez paginas: [`docs/FleetPosix.pdf`](docs/FleetPosix.pdf).
+- PDF de referencia, seis paginas: [`docs/FleetPOSIX_apresentacao.pdf`](docs/FleetPOSIX_apresentacao.pdf).
+- Apresentacao animada: [`docs/FleetPOSIX_apresentacao_animada.pptx`](docs/FleetPOSIX_apresentacao_animada.pptx).
+- Roteiro: [`docs/FleetPOSIX_roteiro.md`](docs/FleetPOSIX_roteiro.md).
+- Evidencias: [validacao automatizada de 25/11/2026](docs/evidence/2026-11-25/README.md) e [capturas e logs de 23/11/2026](docs/evidence/2026-11-23/README.md).
+- Geradores editaveis: [`docs/generate_slides.py`](docs/generate_slides.py) e [`docs/generate_presentation.py`](docs/generate_presentation.py).
 - Mantenedor no `package.xml`: Luiz Felipe Souza da Silva (luix.felipe008@gmail.com).
 - Integrantes e divisao de trabalho: secao [Equipe](#equipe).
 - Sem licenca de codigo aberto (`Proprietary` no `package.xml`).
@@ -260,6 +387,8 @@ para a disciplina estao em [`src/fleet_posix/README.md`](src/fleet_posix/README.
 Os slides incluem os resultados de `make verify`, o andamento e as pendencias,
 e o roteiro Make para conferir o ambiente, testar e executar as simulacoes.
 
-Para regenerar a apresentacao, execute `python docs/generate_slides.py` em um
-ambiente com `reportlab` instalado. Essa dependencia e exclusiva do material
-de apresentacao; nao e necessaria para compilar ou executar o projeto.
+Para regenerar o PDF, execute `python docs/generate_slides.py` em um ambiente
+com `reportlab` instalado; o alvo `make slides` executa esse gerador. Para o
+PowerPoint, execute `python docs/generate_presentation.py` em um ambiente com
+`python-pptx` e as midias em `docs/media/`. Esses pacotes sao exclusivos da
+geracao do material; os arquivos prontos podem ser usados sem eles.
